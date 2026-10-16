@@ -22,6 +22,7 @@ _ASSERT_FAIL = re.compile(r"ASSERT_FAIL\s+(\w+)|Assertion failed in \w+\.(\w+)")
 _CHECK_FAIL = re.compile(r"CHECK_FAIL.*")
 _BUILD_ERR = re.compile(r"^%Error.*", re.M)
 _CODE_KINDS = ("line", "branch", "toggle", "expr")
+_STIMULUS_COUNT = re.compile(r"^(?:VECTORS|CYCLES)\s+(\d+)", re.M)
 
 
 @dataclass
@@ -34,6 +35,7 @@ class SimResult:
     bins: dict[str, int] = field(default_factory=dict)
     point_pct: dict[str, float] = field(default_factory=dict)
     functional_pct: float | None = None
+    stimulus_count: int | None = None
     code: dict[str, dict] = field(default_factory=dict)
     log: str = ""
     run_dir: str = ""
@@ -95,6 +97,8 @@ def collect(run_dir: Path, dut_hier: str = "tb.dut") -> SimResult:
     res.log = log
     res.check_failures = _CHECK_FAIL.findall(log)
     res.assertion_failures = sorted({a or b for a, b in _ASSERT_FAIL.findall(log)})
+    counts = _STIMULUS_COUNT.findall(log)
+    res.stimulus_count = int(counts[-1]) if counts else None
     if "TEST FAILED" in log or res.assertion_failures or res.check_failures:
         res.passed = False
     elif "TEST PASSED" in log:
