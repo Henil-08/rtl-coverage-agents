@@ -14,7 +14,7 @@ from langgraph.types import Command
 from agent.graph import DB_PATH, build_graph, sqlite_checkpointer
 from agent.parser import parse_report
 from agent.state import DEFAULTS
-from agent.tb_template import EDA_INSTRUCTIONS, RUN_DO, build_testbench, dut_source
+from agent.tb_template import EDA_INSTRUCTIONS, build_testbench, dut_source
 from mutation.mutants import MUTANTS, MUTANTS_BY_ID, verdict
 
 
@@ -106,7 +106,6 @@ class VerificationService:
         return {
             "session_id": thread_id,
             "testbench": tb,
-            "run_do": RUN_DO,
             "instructions": EDA_INSTRUCTIONS.replace("design.sv", "the mutant's design.sv"),
             "mutants": [
                 {"id": m.id, "category": m.category, "description": m.description, "design": m.source()}

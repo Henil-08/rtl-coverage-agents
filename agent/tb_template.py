@@ -154,20 +154,11 @@ def build_testbench(iteration: int, blocks: list[dict]) -> str:
     )
 
 
-RUN_DO = """\
-vsim -acdb +access+r tb
-run -all
-acdb save
-acdb report -db fcover.acdb -txt -o cov.txt -verbose
-exec cat cov.txt
-exit
-"""
-
 EDA_INSTRUCTIONS = """\
-1. Open https://www.edaplayground.com and log in.
-2. Left panel: Testbench + Design = **SystemVerilog/Verilog**, Tools & Simulators = **Aldec Riviera Pro**.
+1. Open https://www.edaplayground.com and log in with a validated (university email) account.
+2. Left panel: Testbench + Design = **SystemVerilog/Verilog**, Tools & Simulators = **Synopsys VCS**
+   (Cadence Xcelium or Siemens Questa should also work). Leave **Use run.do** unticked.
 3. Paste **design.sv** into the right pane, **testbench.sv** into the left pane.
-4. Tick **Use run.do Tcl file** and paste the run.do script shown below.
-5. Click **Run**. When it finishes, copy the whole Log output.
-6. Paste the log back here and submit.
+4. Click **Run**. When it finishes, copy the whole Log output.
+5. Paste the log back here and submit.
 """

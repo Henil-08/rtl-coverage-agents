@@ -84,8 +84,6 @@ with loop_tab:
         st.caption(f"generator: {pending['generator']}")
         with st.expander("How to run this on EDA Playground", expanded=status["iteration"] == 1):
             st.markdown(pending["instructions"])
-            st.markdown("**run.do**")
-            st.code(pending["run_do"], language="tcl")
         left, right = st.columns(2)
         with left:
             st.markdown("**testbench.sv** (left pane)")
@@ -95,7 +93,7 @@ with loop_tab:
             st.code(pending["design"], language="verilog", line_numbers=True)
 
         report = st.text_area(
-            "Paste the full Riviera-PRO log (coverage report + pass/fail output)",
+            "Paste the full simulator log (coverage + pass/fail output)",
             height=220,
             key=f"report_{sid}_{pending['iteration']}",
         )

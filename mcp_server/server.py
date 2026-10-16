@@ -14,8 +14,8 @@ mcp = MCPServer(
     "adder4-coverage-agent",
     instructions=(
         "Human-in-the-loop coverage closure for a 4-bit SystemVerilog adder. "
-        "1) propose_test -> run the returned testbench.sv + design.sv on EDA Playground (Aldec Riviera-PRO) "
-        "with the returned run.do. 2) submit_coverage_report with the full log; repeat with the next test it "
+        "1) propose_test -> run the returned testbench.sv + design.sv on EDA Playground "
+        "(Synopsys VCS, Cadence Xcelium or Siemens Questa). 2) submit_coverage_report with the full log; repeat with the next test it "
         "returns until done. 3) list_mutants, run the suite testbench against each mutant, and "
         "submit_mutation_result for each."
     ),
@@ -62,7 +62,7 @@ def propose_test(
 ) -> dict:
     """Start a session, or return the test the session is waiting on.
 
-    next_test has testbench.sv, design.sv, run.do and run instructions. Settings only apply to new sessions.
+    next_test has testbench.sv, design.sv and run instructions. Settings only apply to new sessions.
     """
     s = svc()
     if session_id and s.exists(session_id):
@@ -80,7 +80,7 @@ def propose_test(
 
 @mcp.tool()
 def submit_coverage_report(session_id: str, report: str) -> dict:
-    """Submit the full Riviera-PRO log for the pending test. Returns coverage plus next_test or a summary."""
+    """Submit the full simulator log for the pending test. Returns coverage plus next_test or a summary."""
     return _view(svc().submit_report(session_id, report))
 
 

@@ -124,7 +124,7 @@ def has_coverage(parsed: dict[str, Any]) -> bool:
     return parsed["coverage_pct"] is not None or bool(parsed["point_pct"]) or bool(parsed["bins"])
 
 
-_LLM_PROMPT = """You extract data from a Riviera-PRO simulation log for a 4-bit adder testbench.
+_LLM_PROMPT = """You extract data from a SystemVerilog simulation log for a 4-bit adder testbench.
 Coverpoints and bins in the coverage model: {model}
 
 Return ONLY a JSON object with keys:

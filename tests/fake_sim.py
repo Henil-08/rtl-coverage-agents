@@ -1,4 +1,4 @@
-"""Fake Riviera run: evaluates literal apply() calls and prints the same markers."""
+"""Fake simulator run: evaluates literal apply() calls and prints the same markers."""
 
 from __future__ import annotations
 

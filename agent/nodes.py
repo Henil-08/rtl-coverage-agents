@@ -10,7 +10,7 @@ from agent import prompts
 from agent.fallback import fallback_block
 from agent.parser import has_coverage, parse_report, parse_with_llm, uncovered_targets
 from agent.state import DEFAULTS, VerifState
-from agent.tb_template import COVERAGE_MODEL, EDA_INSTRUCTIONS, RUN_DO, build_testbench, dut_source
+from agent.tb_template import COVERAGE_MODEL, EDA_INSTRUCTIONS, build_testbench, dut_source
 
 _TAG = r"<{0}>\s*(.*?)\s*</{0}>"
 _FORBIDDEN = re.compile(r"\$finish|\bmodule\b|\binitial\b|\balways\b|#\s*\d")
@@ -111,7 +111,6 @@ def make_nodes(llm=None) -> dict[str, Any]:
                 "generator": state.get("generator", ""),
                 "testbench": state["testbench"],
                 "design": dut_source(),
-                "run_do": RUN_DO,
                 "instructions": EDA_INSTRUCTIONS,
                 "parse_error": state.get("parse_error", ""),
             }
@@ -134,7 +133,7 @@ def make_nodes(llm=None) -> dict[str, Any]:
                     "compile_feedback": "\n".join(parsed["compile_errors"][:10]),
                     "parse_error": "",
                 }
-            return {"parse_error": "No coverage data found in the pasted log. Paste the full Riviera-PRO log output."}
+            return {"parse_error": "No coverage data found in the pasted log. Paste the full simulator log."}
 
         pct = parsed["coverage_pct"]
         if pct is None and parsed["point_pct"]:
