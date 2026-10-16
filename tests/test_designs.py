@@ -39,6 +39,7 @@ def test_valid_stimulus():
     assert not valid_stimulus("apply(4'd1, 4'd2, 1'b0); #5;", ("apply",))
     assert not valid_stimulus("initial apply(1,2,0);", ("apply",))
     assert not valid_stimulus("$display(1);", ("apply",))
+    assert split_assertions("a_d: assert property (@(posedge clk) a ##1 b |=> c);")
 
 
 @needs_verilator

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-_FORBIDDEN = re.compile(r"\$finish|\$stop|\bmodule\b|\binitial\b|\balways\w*\b|\bforce\b|#\s*\d")
+_FORBIDDEN = re.compile(r"\$finish|\$stop|\bmodule\b|\binitial\b|\balways\w*\b|\bforce\b|(?<!#)#(?!#)\s*\d")
 _ASSERT_LABEL = re.compile(r"^\s*(\w+)\s*:\s*assert\b")
 
 
