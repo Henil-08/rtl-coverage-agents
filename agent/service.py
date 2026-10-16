@@ -107,7 +107,7 @@ class VerificationService:
             rows = self._conn.execute(
                 "SELECT thread_id, MAX(rowid) FROM checkpoints GROUP BY thread_id ORDER BY MAX(rowid) DESC"
             ).fetchall()
-        return [r[0] for r in rows]
+        return [r[0] for r in rows if (self.graph.get_state(self._config(r[0])).values or {}).get("design") in DESIGNS]
 
     def suite(self, thread_id: str) -> str | None:
         v = self.graph.get_state(self._config(thread_id)).values or {}
