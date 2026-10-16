@@ -6,7 +6,7 @@ from agent.sim import collect, simulate, verilator_available
 
 pytestmark = pytest.mark.skipif(not verilator_available(), reason="verilator not installed")
 
-ADDER = (Path(__file__).resolve().parent.parent / "rtl" / "adder4.sv").read_text()
+ADDER = (Path(__file__).resolve().parent.parent / "designs" / "adder4" / "adder4.sv").read_text()
 
 TB = """\
 module tb;

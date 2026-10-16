@@ -18,7 +18,7 @@ verilator {flags} --top-module {top} --Mdir obj_dir {sources} testbench.sv -o si
 ./obj_dir/simv +verilator+error+limit+100000 2>&1 | tee sim.log
 """
 
-_ASSERT_FAIL = re.compile(r"ASSERT_FAIL\s+(\w+)")
+_ASSERT_FAIL = re.compile(r"ASSERT_FAIL\s+(\w+)|Assertion failed in \w+\.(\w+)")
 _CHECK_FAIL = re.compile(r"CHECK_FAIL.*")
 _BUILD_ERR = re.compile(r"^%Error.*", re.M)
 _CODE_KINDS = ("line", "branch", "toggle", "expr")
@@ -94,8 +94,8 @@ def collect(run_dir: Path, dut_hier: str = "tb.dut") -> SimResult:
     log = _read(run_dir / "sim.log")
     res.log = log
     res.check_failures = _CHECK_FAIL.findall(log)
-    res.assertion_failures = sorted(set(_ASSERT_FAIL.findall(log)))
-    if "TEST FAILED" in log:
+    res.assertion_failures = sorted({a or b for a, b in _ASSERT_FAIL.findall(log)})
+    if "TEST FAILED" in log or res.assertion_failures or res.check_failures:
         res.passed = False
     elif "TEST PASSED" in log:
         res.passed = True

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-DUT_PATH = Path(__file__).resolve().parent.parent / "rtl" / "adder4.sv"
+DUT_PATH = Path(__file__).resolve().parent.parent / "designs" / "adder4" / "adder4.sv"
 
 # keep in sync with COVERGROUP
 COVERAGE_MODEL: dict[str, list[str]] = {
