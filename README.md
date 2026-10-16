@@ -1,148 +1,165 @@
-# AI-in-Hardware: coverage-guided verification agent
+# AI-in-Hardware: coverage-guided verification agents
 
-This is a human-in-the-loop agent that closes functional coverage on a 4-bit SystemVerilog adder
-(`rtl/adder4.sv`). The agent writes directed stimulus and SVA assertions. You run them on
-EDA Playground (Synopsys VCS, Cadence Xcelium or Siemens Questa) and paste the log back. The agent parses the coverage, decides
-what is still missing, and writes the next test. It stops when coverage hits a target, plateaus,
-or reaches the iteration limit. A mutation-testing mode then scores the final suite against 10
-buggy adders.
+A group of LLM agents verifies small SystemVerilog designs on Verilator. They read the spec, write a
+verification plan and assertions, generate stimulus aimed at coverage holes, run the simulator, triage
+failures, and decide when coverage is good enough. Mutation testing then checks whether the resulting
+suite actually catches bugs.
 
-The agent never runs a simulator itself. The simulator run is the one manual step.
+Two designs are included:
+
+- `dpram`: a true dual-port RAM (8-bit × 16, one clock, read-first, port A wins write collisions). This is the main target.
+- `adder4`: a 4-bit ripple-carry adder, kept as a quick sanity check.
+
+## Setup
+
+Needs [uv](https://docs.astral.sh/uv/) and [Verilator](https://verilator.org) 5.050 or newer (covergroup support).
+
+```bash
+brew install verilator          # macOS; on Linux use your package manager or build from source
+uv sync
+cp .env.example .env            # add GROQ_API_KEY; without it every agent uses a deterministic fallback
+uv run pytest -q                # about 2 minutes; every test runs real Verilator builds
+uv run streamlit run app.py
+```
+
+## Modes
+
+| Mode | What happens |
+|------|--------------|
+| auto | The agents run the whole loop, simulator included, and stop on their own. |
+| approval | The loop pauses for your OK on the plan, the assertions, each testbench and each result. Rejecting with feedback makes that agent redo the step. |
+| manual | The agents write each test, and you run the generated `run.sh` yourself. The agents then read the logs and `coverage.dat` from the run folder. |
+
+## How it works
+
+```
+planner ─► assertion_writer ─► stimulus_writer ─► simulator ─► triage ─► coverage_analyst ─┐
+   ▲             ▲  ▲                ▲  ▲                         │  │                       │
+   └ reject      │  └── assertion fired on a clean run / bad SVA ─┘  │                       │
+                 └ reject            │  └── stimulus did not compile ┘                       │
+                                     └──────────────────── next iteration ──────────────────┘
+```
+
+Every arrow out of an LLM step passes through a review gate. Gates pause only in approval mode.
+
+- **Planner** turns `spec.md` into a list of features, the coverpoints that measure each one, and the bug that could hide there.
+- **Assertion writer** writes SVA from the spec and the plan only. It never sees the stimulus, so it
+  can't write checks that just echo the tests.
+- **Stimulus writer** writes the next block of stimulus. Its input is the uncovered bins, the missed
+  toggle/branch/expression points and the analyst's guidance.
+- **Simulator** is a tool, not an LLM: `verilator --binary --timing --coverage --assert`, then the
+  run log and `coverage.dat` are parsed. Functional coverage is computed per bin; code coverage is
+  filtered to the design under test.
+- **Triage** routes problems:
+  - compile errors go back to whichever writer caused them;
+  - an assertion that fires while the reference model is clean is treated as a wrong assertion and is
+    repaired once, then dropped;
+  - a reference-model mismatch stops the loop as a possible design bug.
+- **Coverage analyst** stops the loop when functional and toggle targets are both met, coverage
+  plateaus, or the iteration limit is reached. Otherwise it names the next thing to cover.
+
+The testbench template, the covergroup and the reference model never change. Each iteration's stimulus
+is kept and replayed, so coverage always describes the whole suite.
+
+## Hardware background
+
+**Design under test (DUT).** The RTL being verified. The testbench drives its inputs, and a reference
+model (written in plain SystemVerilog inside the testbench) predicts what the outputs should be.
+
+**Functional coverage.** A `covergroup` lists behaviours you want to see at least once, each as a
+*bin*. For the RAM, examples are:
+- both ports writing the same address in the same cycle;
+- reading address 15 on port B;
+- writing 0xAA;
+- reading a word the other port wrote in the previous cycle.
+
+Coverage % tells you how much of that list the tests have exercised.
+
+**Code coverage.** Verilator counts:
+- whether each signal bit toggled 0→1 and 1→0 (toggle);
+- whether each `if` went both ways (branch);
+- which input combinations each expression saw (expression).
+
+It measures the RTL, not the intent, so it complements functional coverage.
+
+**SVA (SystemVerilog Assertions).** Rules checked on every clock edge, for example
+`!en_a |=> $stable(rdata_a)`: if port A is idle, its read data must not change on the next cycle.
+
+**Mutation testing.** Inject a known bug (a stuck-at fault, an inverted condition, an off-by-one),
+rerun the suite, and see whether it fails. Coverage says the tests *exercised* the design; mutation
+testing shows they would *notice* a bug.
+
+**Read-first / write-first.** When one port reads an address that is being written in the same cycle,
+a read-first RAM returns the old value and a write-first RAM returns the new one. FPGA block RAMs
+offer both; this design is read-first.
+
+## Results so far
+
+Runs without an LLM (deterministic fallback generators), from `uv run python -m agent.bench --mutants`.
+The CSVs are in `bench/`.
+
+| Design | Run | Stimulus to 100% functional | Mutants caught |
+|--------|-----|-----------------------------|----------------|
+| dpram | agent | 43 cycles (toggle ≥ 90% at 123) | 9/10 (M10 survives) |
+| dpram | random, 5 seeds | not reached within 320 cycles on any seed | 10/10 on 4 seeds, 9/10 on 1 |
+| adder4 | agent | 16 vectors | 10/10 |
+| adder4 | random, 5 seeds | 136 vectors on 1 seed, not reached within 160 on the other 4 | 10/10 |
+
+What the numbers say:
+
+- **Closing coverage.** Directed stimulus closes functional coverage far faster than random stimulus,
+  which keeps missing exact corners such as 0x00/0xFF writes and same-address collisions.
+- **Catching bugs.** On the RAM, random stimulus catches more mutants. M10 is a collision compare
+  that ignores the top address bit. It only shows up when both ports write addresses that differ in
+  that bit, and no coverage bin asks for that, so 100% functional coverage does not mean every bug
+  is found. The coverage model has a hole there.
+- **LLM-written assertions.** In one LLM run (Groq, `openai/gpt-oss-120b`), the assertion writer
+  produced 7 assertions for the RAM. Triage found 5 of them firing on the correct design, repaired
+  some, and dropped the ones it couldn't fix. The final suite caught 9/10 mutants, all through the
+  reference model and none through the surviving assertions. Results with an LLM vary from run to
+  run, so rerun the benchmark with `--llm` before quoting numbers.
+
+## MCP server
+
+```bash
+uv run python -m mcp_server.server
+```
+
+| Tool | Purpose |
+|------|---------|
+| `list_designs`, `describe_design` | spec, RTL, covergroup and how to drive each design |
+| `simulate(design, stimulus, assertions)` | run your own stimulus and assertions on Verilator, get coverage back |
+| `start_session`, `get_session`, `respond` | run the built-in agents and answer them at review gates |
+| `run_mutation_testing(session_id)` | score a session's suite against its mutants |
+
+To add it to Claude Code:
+
+```bash
+claude mcp add rtl-coverage -- uv run --directory /abs/path/AI-in-Hardware python -m mcp_server.server
+```
+
+An MCP client can let the built-in agents work, or act as the test writer itself with `simulate`.
+Sessions are stored in `data/sessions.sqlite` and are shared with the Streamlit app.
 
 ## Layout
 
 ```
-rtl/adder4.sv          DUT: ripple-carry adder, cout + signed overflow
-agent/tb_template.py   fixed harness: covergroup, reference scoreboard, result markers
-agent/nodes.py         LangGraph nodes (generate_test, await_human_input, parse_results, critique_and_loop)
-agent/graph.py         graph wiring + shared SQLite checkpointer (data/sessions.sqlite)
-agent/parser.py        regex parser for simulator logs, LLM fallback
-agent/fallback.py      deterministic generator, used when there is no API key or the LLM output is invalid
-agent/service.py       session API used by both the UI and the MCP server
-mutation/mutants.py    10 deterministic mutants
-mcp_server/server.py   MCP tools
+designs/<name>/        RTL, spec.md, testbench template (harness.sv), mutants, fallback generator
+agent/sim.py           Verilator runner and coverage.dat parser
+agent/nodes.py         agent nodes and review gates
+agent/graph.py         LangGraph wiring
+agent/service.py       session API used by the UI and the MCP server
+agent/mutation.py      parallel mutation runs
+agent/bench.py         agent vs random benchmark
 app.py                 Streamlit UI
-tests/                 pytest suite + fake simulator (Python mirror of the covergroup)
+mcp_server/server.py   MCP tools
 ```
-
-## Setup
-
-Needs [uv](https://docs.astral.sh/uv/).
-
-```bash
-uv sync                      # creates .venv from uv.lock
-cp .env.example .env         # put your GROQ_API_KEY in .env
-uv run streamlit run app.py
-uv run pytest -q
-```
-
-Without a Groq key the app still works and uses the deterministic generator in `agent/fallback.py`.
-
-## How the loop works
-
-```
-generate_test -> await_human_input (pause) -> parse_results -> critique_and_loop -+-> generate_test
-                       ^                           |                              +-> END
-                       +---- unreadable paste -----+
-       generate_test <---- compile error (same iteration is rebuilt) ----+
-```
-
-- **Fixed coverage model.** The covergroup `cg_adder` stays the same in every iteration, so
-  coverage numbers can be compared. It covers operand ranges (0 / low / high / 15),
-  `cin`, `cout`, overflow, the direction of overflow, the propagate vector, each stage of the
-  internal carry chain (`dut.c`), and the crosses `a x b` and `cin x cout`.
-- **Cumulative suite.** Each testbench replays the stimulus from every earlier iteration, so the
-  coverage the simulator reports is coverage for the whole suite.
-- **Reference scoreboard.** `apply()` checks every vector against `a + b + cin` and the overflow
-  formula, so bugs are caught even without the generated assertions.
-- **False-positive assertions.** If an assertion fires on the golden DUT while the scoreboard is
-  clean, that assertion is wrong. It is dropped, and the LLM is told why.
-- **Stop rule** (all values can be changed in the sidebar): stop at 95 % coverage, or when the gain
-  stays under 1 % for 2 iterations, or after 10 iterations.
-
-## The manual EDA Playground step
-
-For each iteration, the UI (or the `propose_test` MCP tool) gives you `testbench.sv` and `design.sv`.
-
-1. Register a full EDA Playground account with your university email. VCS, Xcelium and Questa
-   are only available to validated accounts.
-2. Left panel: set **Testbench + Design** to *SystemVerilog/Verilog* and
-   **Tools & Simulators** to *Synopsys VCS*. Xcelium and Questa should also work. Leave **Use run.do** unticked.
-3. Paste `testbench.sv` into the left editor and `design.sv` into the right editor.
-4. Click **Run**. Copy the **whole** log, paste it into the app, and click **Submit results**.
-
-Aldec Riviera-PRO does not work for this project right now. The free EDA Playground license
-fails at elaboration with `You do not have a valid license to simulate SystemVerilog assertion module`.
-
-The testbench prints markers that the parser reads, so it does not depend on any simulator's
-report format:
-
-```
-COV_TOTAL 87.50              overall cg_adder coverage (get_inst_coverage)
-COV_POINT cp_carry 66.67     per coverpoint / cross
-CHECK_FAIL a=.. b=.. ...     scoreboard mismatch
-ASSERT_FAIL a_it2_<name>     SVA failure
-TEST PASSED | TEST FAILED
-```
-
-If the regex finds no coverage at all, an LLM tries to extract it. If that also fails, the UI
-asks you to paste again.
-
-## Mutation testing
-
-Once the loop has a suite, the **Mutation testing** tab lists 10 mutants:
-
-| ID | Class | Bug |
-|----|-------|-----|
-| M01 | stuck-at-0 | `sum[0]` stuck at 0 |
-| M02 | stuck-at-1 | `sum[3]` stuck at 1 |
-| M03 | stuck-at-0 | `cout` stuck at 0 |
-| M04 | stuck-at-1 | `overflow` stuck at 1 |
-| M05 | stuck-at-0 | carry out of bit 1 stuck at 0 |
-| M06 | inverted | carry-in inverted |
-| M07 | inverted | overflow condition inverted |
-| M08 | inverted | generate term `a&b` became `a\|b` |
-| M09 | off-by-one | `cout` taken from `c[3]` |
-| M10 | off-by-one | overflow from `c[2]^c[3]` |
-
-For each mutant, paste the mutant's `design.sv` together with the **same suite testbench**, run it,
-and paste the log. A mutant counts as *caught* on `TEST FAILED`, `CHECK_FAIL` or `ASSERT_FAIL`,
-and as *survived* on `TEST PASSED`. Any other log is *invalid*, for example a compile error.
-If the suite grows after you record results, those results are marked stale and are not counted.
-
-## MCP tools
-
-```bash
-uv run python -m mcp_server.server     # stdio
-```
-
-| Tool | What it does |
-|------|--------------|
-| `propose_test(session_id?, target_pct?, plateau_iters?, plateau_delta?, max_iters?)` | starts a session, or returns the test that is waiting for results |
-| `submit_coverage_report(session_id, report)` | parses the log; returns coverage, the critique, and `next_test` or a final `summary` |
-| `list_mutants(session_id)` | returns the suite testbench and the 10 mutant designs (a helper so MCP clients can get the mutant sources) |
-| `submit_mutation_result(session_id, mutant_id, report)` | returns the verdict and the running mutation score |
-
-Example config for an MCP client:
-
-```json
-{
-  "mcpServers": {
-    "adder4-coverage-agent": {
-      "command": "uv",
-      "args": ["run", "--directory", "/abs/path/AI-in-Hardware", "python", "-m", "mcp_server.server"],
-      "env": { "GROQ_API_KEY": "..." }
-    }
-  }
-}
-```
-
-Sessions are stored in `data/sessions.sqlite`, which the Streamlit app also uses. A session
-started over MCP shows up in the app's **Resume session** list, and the reverse is also true.
 
 ## Limitations
 
-- No simulator runs locally. The tests check the Python side with a fake simulator that mirrors
-  the covergroup.
-- The markers give coverage per coverpoint, not per bin. The parser also reads bin rows from
-  Riviera `acdb report` text if they are pasted, but other simulators' bin reports are not parsed.
+- Verilator's covergroup support is recent. Per-coverpoint `get_inst_coverage()` is not supported, so
+  coverage is read from `coverage.dat` instead.
+- The designs are small on purpose. The adder has only 512 possible inputs, so testing all of them
+  beats any agent. The RAM is where coverage-directed stimulus matters.
+- Groq's free tier rate-limits quickly. The agents back off and retry, then fall back to deterministic
+  generators. The trace shows when that happened.
