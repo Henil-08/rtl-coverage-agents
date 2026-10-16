@@ -32,12 +32,12 @@ class Design:
     title: str
     root: Path
     rtl_files: tuple[str, ...]
-    driver: str
+    drivers: tuple[str, ...]
     harness_doc: str
     mutants: list[Mutant]
     default_plan: list[dict]
     default_assertions: str
-    fallback: Callable[[int, dict[str, int], list[dict]], tuple[str, str]]
+    fallback: Callable[..., tuple[str, str]]
     random_stimulus: Callable[[random.Random, int], str]
     dut_hier: str = "tb.dut"
     extra: dict = field(default_factory=dict)
@@ -88,8 +88,9 @@ def strip_fences(text: str) -> str:
     return re.sub(r"```\w*", "", text).strip()
 
 
-def valid_stimulus(text: str, driver: str) -> bool:
-    return bool(text.strip()) and f"{driver}(" in text and not _FORBIDDEN.search(text)
+def valid_stimulus(text: str, drivers: tuple[str, ...]) -> bool:
+    calls = any(re.search(rf"\b{d}\s*\(", text) for d in drivers)
+    return calls and not _FORBIDDEN.search(text)
 
 
 def split_assertions(text: str) -> list[dict]:

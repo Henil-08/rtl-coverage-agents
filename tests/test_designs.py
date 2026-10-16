@@ -34,9 +34,11 @@ def test_split_assertions_adds_action_block_and_dedupes():
 
 
 def test_valid_stimulus():
-    assert valid_stimulus("apply(4'd1, 4'd2, 1'b0);", "apply")
-    assert not valid_stimulus("apply(4'd1, 4'd2, 1'b0); #5;", "apply")
-    assert not valid_stimulus("initial apply(1,2,0);", "apply")
+    assert valid_stimulus("apply(4'd1, 4'd2, 1'b0);", ("apply",))
+    assert valid_stimulus("write_a(4'd1, 8'h00);", ("cycle", "write_a"))
+    assert not valid_stimulus("apply(4'd1, 4'd2, 1'b0); #5;", ("apply",))
+    assert not valid_stimulus("initial apply(1,2,0);", ("apply",))
+    assert not valid_stimulus("$display(1);", ("apply",))
 
 
 @needs_verilator
@@ -73,3 +75,35 @@ def test_adder_python_model_matches_verilator(tmp_path):
     assert set(r.bins) == ALL_BINS
     expected = set().union(*(bins_hit(*v) for v in vectors))
     assert {k for k, v in r.bins.items() if v} == expected
+
+
+@needs_verilator
+def test_dpram_fallback_closes_functional_coverage(tmp_path):
+    from designs.dpram import DESIGN
+
+    blocks, bins, code = [], {}, None
+    for it in range(1, 6):
+        focus, stim = DESIGN.fallback(it, bins, blocks, code)
+        blocks.append({"iteration": it, "focus": focus, "stimulus": stim})
+        r = simulate(tmp_path / str(it), DESIGN.sources(), DESIGN.build_testbench(blocks, []))
+        assert r.passed is True, r.compile_errors or r.check_failures
+        bins, code = r.bins, r.code
+    assert r.functional_pct == 100.0
+    assert r.code["toggle"]["pct"] > 90
+
+
+@needs_verilator
+def test_dpram_reference_model_and_assertions_catch_mutants(tmp_path):
+    from designs.dpram import DESIGN, LIBRARY, TOGGLE_MARCH
+
+    stim = "\n".join(s for _, _, s in LIBRARY) + "\n" + TOGGLE_MARCH
+    tb = DESIGN.build_testbench([{"iteration": 1, "stimulus": stim}], split_assertions(DESIGN.default_assertions))
+    golden = simulate(tmp_path / "golden", DESIGN.sources(), tb)
+    assert golden.passed is True, golden.assertion_failures or golden.check_failures
+    survivors = []
+    for m in DESIGN.mutants:
+        r = simulate(tmp_path / m.id, DESIGN.mutant_sources(m), tb)
+        assert r.built, (m.id, r.compile_errors)
+        if r.passed:
+            survivors.append(m.id)
+    assert survivors == ["M10"]

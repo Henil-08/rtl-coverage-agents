@@ -110,7 +110,7 @@ def _prior_hits(blocks: list[dict]) -> set[str]:
     return hit
 
 
-def fallback(iteration: int, bins: dict[str, int], blocks: list[dict]) -> tuple[str, str]:
+def fallback(iteration: int, bins: dict[str, int], blocks: list[dict], code: dict | None = None) -> tuple[str, str]:
     """Greedy set cover over the Python model of the covergroup."""
     targets = {k for k, v in bins.items() if v == 0} if bins else set(ALL_BINS)
     targets -= _prior_hits(blocks)
@@ -139,7 +139,7 @@ DESIGN = Design(
     title="4-bit ripple-carry adder",
     root=ROOT,
     rtl_files=("adder4.sv",),
-    driver="apply",
+    drivers=("apply",),
     harness_doc=HARNESS_DOC,
     mutants=MUTANTS,
     default_plan=PLAN,
