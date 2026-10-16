@@ -141,6 +141,7 @@ DESIGN = Design(
     rtl_files=("adder4.sv",),
     drivers=("apply",),
     harness_doc=HARNESS_DOC,
+    signals="clk (testbench clock, inputs change on negedge); logic [3:0] a, b; logic cin; logic [3:0] sum; logic cout, overflow",
     mutants=MUTANTS,
     default_plan=PLAN,
     default_assertions=ASSERTIONS,

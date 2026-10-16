@@ -1,21 +1,24 @@
-"""Session API used by both the Streamlit app and the MCP server."""
+"""Session API shared by the Streamlit app and the MCP server."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from langgraph.types import Command
 
-from agent.graph import DB_PATH, build_graph, sqlite_checkpointer
-from agent.parser import parse_report
-from agent.state import DEFAULTS
-from agent.tb_template import EDA_INSTRUCTIONS, build_testbench, dut_source
-from mutation.mutants import MUTANTS, MUTANTS_BY_ID, verdict
+from agent.graph import DB_PATH, RUNS_DIR, build_graph, sqlite_checkpointer
+from agent.mutation import run_mutants
+from agent.sim import simulate
+from agent.state import DEFAULTS, MODES
+from designs import DESIGNS, get_design
+
+RECURSION_LIMIT = 400
 
 
 def _hash(text: str) -> str:
@@ -23,68 +26,81 @@ def _hash(text: str) -> str:
 
 
 class VerificationService:
-    def __init__(self, llm=None, db_path: Path = DB_PATH):
+    def __init__(self, llm=None, db_path: Path = DB_PATH, runs_dir: Path = RUNS_DIR):
+        self.runs_dir = Path(runs_dir)
         self.saver = sqlite_checkpointer(db_path)
-        self.graph = build_graph(llm, self.saver)
+        self.graph = build_graph(llm, self.saver, self.runs_dir)
         self._conn = self.saver.conn
         self._lock = threading.Lock()
         with self._lock:
             self._conn.execute(
-                """CREATE TABLE IF NOT EXISTS mutation_results (
-                       thread_id TEXT, mutant_id TEXT, verdict TEXT, suite_hash TEXT,
-                       raw TEXT, ts REAL, PRIMARY KEY (thread_id, mutant_id))"""
+                """CREATE TABLE IF NOT EXISTS mutation_runs (
+                       thread_id TEXT PRIMARY KEY, suite_hash TEXT, report TEXT, ts REAL)"""
             )
             self._conn.commit()
 
     @staticmethod
     def _config(thread_id: str) -> dict:
-        return {"configurable": {"thread_id": thread_id}}
+        return {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
 
-    def start(self, thread_id: str | None = None, **settings: Any) -> dict:
-        thread_id = thread_id or uuid.uuid4().hex[:8]
+    def _drive(self, payload, thread_id: str, on_event: Callable[[dict], None] | None) -> dict:
+        for update in self.graph.stream(payload, self._config(thread_id), stream_mode="updates"):
+            if on_event is None:
+                continue
+            for node, values in update.items():
+                if isinstance(values, dict):
+                    for ev in values.get("events", []):
+                        on_event({"node": node, **ev})
+        return self.status(thread_id)
+
+    def start(self, design: str, mode: str = "auto", thread_id: str | None = None,
+              on_event: Callable[[dict], None] | None = None, **settings: Any) -> dict:
+        get_design(design)
+        if mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}")
+        thread_id = thread_id or f"{design}-{uuid.uuid4().hex[:6]}"
         if self.exists(thread_id):
             return self.status(thread_id)
-        init = {**DEFAULTS, **{k: v for k, v in settings.items() if k in DEFAULTS and v is not None}}
-        init.update({"iteration": 0, "blocks": [], "history": []})
-        self.graph.invoke(init, self._config(thread_id))
-        return self.status(thread_id)
+        init = dict(DEFAULTS)
+        init.update({k: v for k, v in settings.items() if k in DEFAULTS and v is not None})
+        init.update(design=design, mode=mode, run_root=str(self.runs_dir / thread_id),
+                    iteration=0, blocks=[], assertions=[], history=[], events=[])
+        return self._drive(init, thread_id, on_event)
+
+    def respond(self, thread_id: str, action: str = "approve", feedback: str = "",
+                on_event: Callable[[dict], None] | None = None) -> dict:
+        if not self.status(thread_id)["pending"]:
+            raise ValueError(f"session {thread_id} is not waiting for input")
+        return self._drive(Command(resume={"action": action, "feedback": feedback}), thread_id, on_event)
 
     def exists(self, thread_id: str) -> bool:
         return bool(self.graph.get_state(self._config(thread_id)).values)
 
     def status(self, thread_id: str) -> dict:
         snap = self.graph.get_state(self._config(thread_id))
-        values = snap.values or {}
-        pending = None
+        v = snap.values or {}
         interrupts = getattr(snap, "interrupts", None) or [i for t in snap.tasks for i in t.interrupts]
-        if interrupts:
-            pending = interrupts[0].value
-        history = values.get("history", [])
         return {
             "session_id": thread_id,
-            "exists": bool(values),
-            "iteration": values.get("iteration", 0),
-            "done": bool(values.get("done")),
-            "stop_reason": values.get("stop_reason", ""),
-            "coverage_pct": values.get("coverage_pct"),
-            "point_pct": values.get("point_pct", {}),
-            "bins": values.get("bins", {}),
-            "assertion_failures": values.get("assertion_failures", []),
-            "check_failures": values.get("check_failures", []),
-            "passed": values.get("passed"),
-            "critique": values.get("critique", ""),
-            "next_focus": values.get("next_focus", ""),
-            "history": history,
-            "pending": pending,
-            "settings": {k: values.get(k, v) for k, v in DEFAULTS.items()},
+            "exists": bool(v),
+            "design": v.get("design"),
+            "mode": v.get("mode"),
+            "iteration": v.get("iteration", 0),
+            "done": bool(v.get("done")),
+            "stop_reason": v.get("stop_reason", ""),
+            "plan": v.get("plan", []),
+            "assertions": v.get("assertions", []),
+            "blocks": v.get("blocks", []),
+            "testbench": v.get("testbench", ""),
+            "result": dict(v.get("result") or {}),
+            "issue": v.get("issue", ""),
+            "triage_note": v.get("triage_note", ""),
+            "analysis": v.get("analysis", ""),
+            "history": v.get("history", []),
+            "events": v.get("events", []),
+            "pending": interrupts[0].value if interrupts else None,
+            "settings": {k: v.get(k, d) for k, d in DEFAULTS.items()},
         }
-
-    def submit_report(self, thread_id: str, report: str) -> dict:
-        st = self.status(thread_id)
-        if not st["pending"]:
-            raise ValueError(f"session {thread_id} is not waiting for a coverage report")
-        self.graph.invoke(Command(resume=report), self._config(thread_id))
-        return self.status(thread_id)
 
     def list_sessions(self) -> list[str]:
         with self._lock:
@@ -93,82 +109,64 @@ class VerificationService:
             ).fetchall()
         return [r[0] for r in rows]
 
-    def suite_testbench(self, thread_id: str) -> str | None:
-        values = self.graph.get_state(self._config(thread_id)).values or {}
-        blocks = values.get("blocks") or []
-        if not blocks:
+    def suite(self, thread_id: str) -> str | None:
+        v = self.graph.get_state(self._config(thread_id)).values or {}
+        if not v.get("blocks"):
             return None
-        # rebuild so assertions dropped after the last tb was generated stay out
-        return build_testbench(values.get("iteration", len(blocks)), blocks)
+        return get_design(v["design"]).build_testbench(v["blocks"], v.get("assertions", []))
 
-    def mutants(self, thread_id: str) -> dict:
-        tb = self.suite_testbench(thread_id)
-        return {
-            "session_id": thread_id,
-            "testbench": tb,
-            "instructions": EDA_INSTRUCTIONS.replace("design.sv", "the mutant's design.sv"),
-            "mutants": [
-                {"id": m.id, "category": m.category, "description": m.description, "design": m.source()}
-                for m in MUTANTS
-            ],
-        }
-
-    def submit_mutation(self, thread_id: str, mutant_id: str, report: str) -> dict:
-        if mutant_id not in MUTANTS_BY_ID:
-            raise ValueError(f"unknown mutant {mutant_id}; expected one of {list(MUTANTS_BY_ID)}")
-        tb = self.suite_testbench(thread_id)
+    def run_mutation(self, thread_id: str, workers: int = 4) -> dict:
+        v = self.graph.get_state(self._config(thread_id)).values or {}
+        tb = self.suite(thread_id)
         if tb is None:
             raise ValueError(f"session {thread_id} has no test suite yet")
-        parsed = parse_report(report)
-        v = verdict(parsed)
+        report = run_mutants(get_design(v["design"]), tb, self.runs_dir / thread_id / "mutants", workers)
+        report["suite_hash"] = _hash(tb)
         with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO mutation_results VALUES (?, ?, ?, ?, ?, ?)",
-                (thread_id, mutant_id, v, _hash(tb), report, time.time()),
-            )
+            self._conn.execute("INSERT OR REPLACE INTO mutation_runs VALUES (?, ?, ?, ?)",
+                               (thread_id, report["suite_hash"], json.dumps(report), time.time()))
             self._conn.commit()
-        return {
-            "mutant_id": mutant_id,
-            "verdict": v,
-            "check_failures": parsed["check_failures"][:5],
-            "assertion_failures": parsed["assertion_failures"][:5],
-            "score": self.mutation_score(thread_id),
-        }
+        return report
 
-    def mutation_score(self, thread_id: str) -> dict:
-        tb = self.suite_testbench(thread_id)
-        current = _hash(tb) if tb else None
+    def mutation_report(self, thread_id: str) -> dict | None:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT mutant_id, verdict, suite_hash FROM mutation_results WHERE thread_id = ?", (thread_id,)
-            ).fetchall()
-        results = {}
-        for mid, v, h in rows:
-            results[mid] = {"verdict": v, "stale": h != current}
-        fresh = {k: r for k, r in results.items() if not r["stale"]}
-        caught = sum(r["verdict"] == "caught" for r in fresh.values())
-        return {
-            "caught": caught,
-            "survived": sum(r["verdict"] == "survived" for r in fresh.values()),
-            "invalid": sum(r["verdict"] == "invalid" for r in fresh.values()),
-            "run": len(fresh),
-            "total": len(MUTANTS),
-            "score_pct": round(100.0 * caught / len(MUTANTS), 1),
-            "results": results,
-        }
+            row = self._conn.execute(
+                "SELECT suite_hash, report FROM mutation_runs WHERE thread_id = ?", (thread_id,)).fetchone()
+        if not row:
+            return None
+        report = json.loads(row[1])
+        tb = self.suite(thread_id)
+        report["stale"] = tb is None or _hash(tb) != row[0]
+        return report
 
     def summary(self, thread_id: str) -> dict:
         st = self.status(thread_id)
+        res = st["result"]
+        mut = self.mutation_report(thread_id)
         return {
             "session_id": thread_id,
-            "coverage_pct": st["coverage_pct"],
+            "design": st["design"],
+            "mode": st["mode"],
             "iterations": len(st["history"]),
+            "simulations": sum(e["agent"] == "simulator" for e in st["events"]),
+            "functional_pct": res.get("functional_pct"),
+            "code": {k: c.get("pct") for k, c in (res.get("code") or {}).items()},
             "done": st["done"],
             "stop_reason": st["stop_reason"],
-            "coverage_history": [h.get("coverage_pct") for h in st["history"]],
-            "mutation": self.mutation_score(thread_id),
+            "assertions_active": sum(a["status"] == "active" for a in st["assertions"]),
+            "assertions_dropped": sum(a["status"] == "dropped" for a in st["assertions"]),
+            "mutation": None if mut is None else {k: mut.get(k) for k in (
+                "caught", "total", "caught_by_assertions", "survived", "score_pct", "stale")},
         }
 
+    def simulate(self, design: str, testbench: str, sources: dict[str, str] | None = None) -> dict:
+        """Run any testbench against a design, or against replacement sources, and return the parsed result."""
+        d = get_design(design)
+        res = simulate(self.runs_dir / "adhoc" / uuid.uuid4().hex[:8], sources or d.sources(),
+                       testbench, d.dut_hier).to_dict()
+        res["log"] = res["log"][-6000:]
+        return res
+
     @staticmethod
-    def design() -> str:
-        return dut_source()
+    def designs() -> list[dict]:
+        return [{"name": d.name, "title": d.title, "mutants": len(d.mutants)} for d in DESIGNS.values()]

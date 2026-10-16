@@ -162,6 +162,8 @@ DESIGN = Design(
     rtl_files=("dpram.sv",),
     drivers=("cycle", "write_a", "read_a", "write_b", "read_b", "idle"),
     harness_doc=HARNESS_DOC,
+    signals=("clk; logic en_a, we_a, en_b, we_b; logic [3:0] addr_a, addr_b; logic [7:0] wdata_a, wdata_b, "
+             "rdata_a, rdata_b. Inputs change on negedge clk; rdata reflects the read one posedge later."),
     mutants=MUTANTS,
     default_plan=PLAN,
     default_assertions=ASSERTIONS,

@@ -1,152 +1,127 @@
-from __future__ import annotations
+import subprocess
 
 import pytest
 
-from agent.fallback import ALL_BINS, bins_hit
-from agent.nodes import _parse_generation
-from agent.parser import parse_report
 from agent.service import VerificationService
-from agent.tb_template import COVERAGE_MODEL, build_testbench, dut_source
-from mutation.mutants import MUTANTS, verdict
-from tests.fake_sim import simulate
+from agent.sim import verilator_available
+from designs import get_design
+
+pytestmark = pytest.mark.skipif(not verilator_available(), reason="verilator not installed")
 
 
 @pytest.fixture
-def svc(tmp_path):
-    return VerificationService(llm=None, db_path=tmp_path / "s.sqlite")
+def make_svc(tmp_path):
+    def make(llm=None):
+        return VerificationService(llm=llm, db_path=tmp_path / "s.sqlite", runs_dir=tmp_path / "runs")
+    return make
 
 
-def test_python_mirror_bins_are_in_model():
-    hit = set()
-    for a in range(16):
-        for b in range(16):
-            for c in range(2):
-                hit |= bins_hit(a, b, c)
-    assert hit == ALL_BINS
+def agents(st):
+    return {e["agent"] for e in st["events"]}
 
 
-def test_parser_markers_and_bins():
-    log = simulate("apply(4'd0, 4'd0, 1'b0);\napply(4'd15, 4'd15, 1'b1);")
-    p = parse_report(log)
-    assert p["passed"] is True
-    assert p["coverage_pct"] is not None
-    assert set(p["point_pct"]) == set(COVERAGE_MODEL)
-    assert p["bins"]["cp_a.zero"] is True
-    assert p["bins"]["cp_a.low"] is False
-    assert p["bins"]["cx_a_b.maxxmax"] is True
-    assert p["bins"]["cx_a_b.zeroxmax"] is False
-
-
-def test_parser_failures():
-    p = parse_report(simulate("apply(4'd15, 4'd1, 1'b0);", fail_check=True))
-    assert p["passed"] is False and p["check_failures"]
-    p = parse_report("# KERNEL: ASSERT_FAIL a_it2_carry at time 25\n# KERNEL: TEST FAILED")
-    assert p["assertion_failures"] and p["passed"] is False
-    p = parse_report("# COMP96 ERROR: testbench.sv(12): Error: syntax error")
-    assert p["passed"] is None and p["coverage_pct"] is None
-
-
-def test_parse_generation_relabels_and_rejects():
-    ok = _parse_generation(
-        "<focus>carry</focus><assertions>\nchk: assert property (@(posedge clk) 1) else begin end\n</assertions>"
-        "<stimulus>\napply(4'd15, 4'd1, 1'b0);\n</stimulus>",
-        3,
-    )
-    assert ok and "a_it3_chk: assert" in ok["assertions"]
-    assert _parse_generation("<stimulus>$finish;</stimulus>", 1) is None
-
-
-def test_full_loop_reaches_target(svc):
-    st = svc.start("t1", target_pct=100.0, max_iters=8, plateau_iters=2)
-    assert st["pending"] and st["iteration"] == 1
-    assert "module tb" in st["pending"]["testbench"]
-    seen = []
-    while not st["done"]:
-        st = svc.submit_report("t1", simulate(st["pending"]["testbench"]))
-        seen.append(st["coverage_pct"])
-    assert seen == sorted(seen)
-    assert st["coverage_pct"] == 100.0
-    assert "target" in st["stop_reason"]
-    tb = svc.suite_testbench("t1")
+@pytest.mark.parametrize("design", ["adder4", "dpram"])
+def test_auto_mode_closes_functional_coverage(make_svc, design):
+    svc = make_svc()
+    st = svc.start(design, "auto", target_pct=100.0, max_iters=8)
+    assert st["done"] and st["pending"] is None
+    assert st["result"]["functional_pct"] == 100.0, st["stop_reason"]
+    pcts = [h["functional_pct"] for h in st["history"]]
+    assert pcts == sorted(pcts)
+    assert {"planner", "assertion_writer", "stimulus_writer", "simulator", "triage", "coverage_analyst"} <= agents(st)
+    suite = svc.suite(st["session_id"])
     for i in range(1, st["iteration"] + 1):
-        assert f"stim_it{i}();" in tb
+        assert f"stim_it{i}();" in suite
 
 
-def test_garbage_paste_reprompts(svc):
-    svc.start("t2")
-    st = svc.submit_report("t2", "hello")
-    assert st["pending"]["parse_error"] and st["iteration"] == 1 and not st["history"]
+def test_approval_mode_gates_every_step(make_svc):
+    svc = make_svc()
+    st = svc.start("adder4", "approval", thread_id="ap")
+    assert st["pending"]["step"] == "plan"
+    st = svc.respond("ap", "approve")
+    assert st["pending"]["step"] == "assertions"
+    st = svc.respond("ap", "approve")
+    assert st["pending"]["step"] == "testbench" and st["iteration"] == 1
+    st = svc.respond("ap", "reject", "try the carry chain first")
+    assert st["pending"]["step"] == "testbench" and st["iteration"] == 1
+    st = svc.respond("ap", "approve")
+    assert st["pending"]["step"] == "results" and st["result"]["built"]
+    st = svc.respond("ap", "stop")
+    assert st["done"] and st["stop_reason"] == "stopped by reviewer"
 
 
-def test_plateau_stop(svc):
-    st = svc.start("t3", target_pct=100.0, plateau_iters=2, max_iters=10)
-    tb = st["pending"]["testbench"]
-    first = simulate(tb)
-    st = svc.submit_report("t3", first)
-    for _ in range(5):
-        if st["done"]:
-            break
-        st = svc.submit_report("t3", first)
-    assert st["done"] and "plateau" in st["stop_reason"]
-
-
-def test_mutants_apply_and_differ():
-    golden = dut_source()
-    srcs = {m.id: m.source(golden) for m in MUTANTS}
-    assert len(srcs) == 10 and len(set(srcs.values())) == 10
-    for s in srcs.values():
-        assert "module adder4" in s and "logic [4:0] c;" in s
-
-
-def test_mutation_scoring(svc):
-    st = svc.start("t4")
-    svc.submit_report("t4", simulate(st["pending"]["testbench"]))
-    tb = svc.suite_testbench("t4")
-    r = svc.submit_mutation("t4", "M03", simulate(tb, fail_check=True))
-    assert r["verdict"] == "caught" and r["score"]["caught"] == 1
-    r = svc.submit_mutation("t4", "M07", simulate(tb))
-    assert r["verdict"] == "survived" and r["score"]["run"] == 2
-    assert verdict({"passed": None}) == "invalid"
-
-
-def test_harness_formats():
-    tb = build_testbench(1, [{"iteration": 1, "focus": "x", "stimulus": "apply(4'd0, 4'd0, 1'b0);", "assertions": ""}])
-    assert "{cout, sum} !== exp_full" in tb and "{" not in tb.split("COV_TOTAL")[1].split("\n")[0].replace("%0.2f", "")
-
-
-def test_loop_without_bin_level_report(svc):
-    st = svc.start("t5", target_pct=100.0, max_iters=10)
-    while not st["done"]:
-        st = svc.submit_report("t5", simulate(st["pending"]["testbench"], with_bins=False))
-    assert st["coverage_pct"] == 100.0
+def test_manual_mode_waits_for_the_human_to_run(make_svc):
+    svc = make_svc()
+    st = svc.start("adder4", "manual", thread_id="man", max_iters=1)
+    first = st["pending"]
+    assert first["step"] == "run_simulation" and first["command"].startswith("bash ")
+    st = svc.respond("man")
+    assert st["pending"]["run_dir"] == first["run_dir"]
+    subprocess.run(first["command"], shell=True, check=True, capture_output=True)
+    st = svc.respond("man")
+    assert st["done"] and st["result"]["functional_pct"] > 0
 
 
 class FakeLLM:
+    """Bad stimulus once, then good; one assertion that is wrong for a correct adder."""
 
     def __init__(self):
-        self.calls = 0
+        self.stimulus_calls = 0
+        self.repairs = 0
 
     def invoke(self, msgs):
-        self.calls += 1
-        text = msgs[-1][1] if isinstance(msgs, list) else msgs
-        if "OUTPUT exactly these three tagged sections" in text:
-            body = (
-                "<focus>full ripple and max+max</focus>\n<assertions>\n"
-                "ripple: assert property (@(posedge clk) (a == 4'd15 && b == 4'd0 && cin) |-> cout) "
-                'else begin $error("ASSERT_FAIL ripple"); errors++; end\n</assertions>\n'
-                "<stimulus>\n```systemverilog\napply(4'd15, 4'd0, 1'b1);\napply(4'd15, 4'd15, 1'b1);\n```\n</stimulus>"
-            )
+        system, user = msgs[0][1], msgs[-1][1]
+        if "verification plan" in system:
+            out = '[{"feature": "sum is right", "coverpoints": ["cp_a"], "risk": "wrong sum"}]'
+        elif "This assertion has a problem" in user:
+            self.repairs += 1
+            out = "DROP"
+        elif "SystemVerilog Assertions" in system:
+            out = ("<assertions>\na_sum: assert property (@(posedge clk) {cout, sum} == a + b + cin);\n"
+                   "a_wrong: assert property (@(posedge clk) cout == 1'b0);\n</assertions>")
+        elif "closing coverage" in system:
+            self.stimulus_calls += 1
+            if self.stimulus_calls == 1:
+                out = "<focus>broken</focus><stimulus>apply(4'd1, 4'd2);</stimulus>"
+            else:
+                out = "<focus>carry</focus><stimulus>apply(4'd15, 4'd1, 1'b0);\napply(4'd0, 4'd0, 1'b0);</stimulus>"
         else:
-            body = "Still missing low+high crosses; apply a=3 b=9 cin=0."
-        return type("R", (), {"content": body})()
+            out = "Still missing the low x high crosses; apply a=3, b=9."
+        return type("R", (), {"content": out})()
 
 
-def test_llm_generation_path(tmp_path):
+def test_triage_routes_compile_errors_and_bad_assertions(make_svc):
     llm = FakeLLM()
-    svc = VerificationService(llm=llm, db_path=tmp_path / "l.sqlite")
-    st = svc.start("t6")
-    p = st["pending"]
-    assert p["generator"] == "llm" and "a_it1_ripple: assert" in p["testbench"]
-    assert "```" not in p["testbench"]
-    st = svc.submit_report("t6", simulate(p["testbench"]))
-    assert "a=3 b=9" in st["next_focus"] and st["iteration"] == 2
+    svc = make_svc(llm)
+    st = svc.start("adder4", "auto", thread_id="llm", max_iters=2)
+    kinds = [(e["agent"], e["summary"]) for e in st["events"]]
+    assert any(a == "triage" and "stimulus compile error" in s for a, s in kinds)
+    assert any(a == "triage" and "a_wrong" in s for a, s in kinds)
+    assert llm.repairs == 1
+    status = {a["label"]: a["status"] for a in st["assertions"]}
+    assert status == {"a_sum": "active", "a_wrong": "dropped"}
+    assert st["result"]["passed"] is True
+    assert st["plan"][0]["feature"] == "sum is right"
+    assert any(e["agent"] == "coverage_analyst" and e["kind"] == "llm" for e in st["events"])
+    assert st["blocks"][-1]["iteration"] == 2
+
+
+def test_design_bug_stops_the_loop(make_svc, monkeypatch):
+    d = get_design("adder4")
+    buggy = d.mutant_sources(d.mutants[2])
+    monkeypatch.setattr(type(d), "sources", lambda self: buggy)
+    st = make_svc().start("adder4", "auto")
+    assert st["done"] and "possible design bug" in st["stop_reason"]
+    assert st["issue"] == "design_mismatch"
+
+
+def test_mutation_scores(make_svc):
+    svc = make_svc()
+    adder = svc.start("adder4", "auto", target_pct=100.0)
+    rep = svc.run_mutation(adder["session_id"])
+    assert rep["golden_ok"] and rep["caught"] == 10
+    dp = svc.start("dpram", "auto", target_pct=100.0)
+    rep = svc.run_mutation(dp["session_id"])
+    assert rep["golden_ok"] and rep["survived"] == ["M10"]
+    assert svc.mutation_report(dp["session_id"])["stale"] is False
+    assert svc.summary(dp["session_id"])["mutation"]["caught"] == 9

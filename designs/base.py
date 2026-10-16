@@ -34,6 +34,7 @@ class Design:
     rtl_files: tuple[str, ...]
     drivers: tuple[str, ...]
     harness_doc: str
+    signals: str
     mutants: list[Mutant]
     default_plan: list[dict]
     default_assertions: str
