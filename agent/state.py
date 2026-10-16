@@ -10,6 +10,7 @@ class VerifState(TypedDict, total=False):
     design: str
     mode: str
     target_pct: float
+    toggle_target: float
     plateau_iters: int
     plateau_delta: float
     max_iters: int
@@ -44,6 +45,7 @@ class VerifState(TypedDict, total=False):
 DEFAULTS: dict[str, Any] = {
     "mode": "auto",
     "target_pct": 100.0,
+    "toggle_target": 90.0,
     "plateau_iters": 2,
     "plateau_delta": 1.0,
     "max_iters": 8,

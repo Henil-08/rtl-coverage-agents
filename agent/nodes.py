@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +27,6 @@ def _tag(text: str, tag: str) -> str:
     return strip_fences(m.group(1)) if m else ""
 
 
-def _event(state: VerifState, agent: str, kind: str, summary: str) -> dict:
-    return {"agent": agent, "kind": kind, "summary": summary, "iteration": state.get("iteration", 0)}
-
-
 def _uncovered(result: dict | None) -> list[str]:
     return [k for k, v in (result or {}).get("bins", {}).items() if v == 0]
 
@@ -50,15 +47,28 @@ def _missed(result: dict | None, limit: int = 15) -> list[str]:
 
 def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     runs_dir = runs_dir or Path("runs")
+    last_error = {"msg": ""}
 
     def ask(system: str, user: str) -> str | None:
+        last_error["msg"] = ""
         if llm is None:
             return None
-        try:
-            resp = llm.invoke([("system", system), ("user", user)])
-        except Exception:
-            return None
-        return getattr(resp, "content", str(resp))
+        for attempt in range(3):
+            try:
+                resp = llm.invoke([("system", system), ("user", user)])
+                return getattr(resp, "content", str(resp))
+            except Exception as e:
+                last_error["msg"] = f"{type(e).__name__}: {str(e)[:160]}"
+                if "RateLimit" not in type(e).__name__ or attempt == 2:
+                    return None
+                m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", str(e))
+                time.sleep(min(30.0, (int(m.group(1) or 0) * 60 + float(m.group(2))) if m else 10.0) + 0.5)
+        return None
+
+    def _event(state: VerifState, agent: str, kind: str, summary: str) -> dict:
+        if kind == "fallback" and last_error["msg"]:
+            summary += f" (LLM error, used fallback: {last_error['msg']})"
+        return {"agent": agent, "kind": kind, "summary": summary, "iteration": state.get("iteration", 0)}
 
     def planner(state: VerifState) -> dict:
         d = get_design(state["design"])
@@ -279,23 +289,32 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             "passed": res.get("passed"),
             "assertions_active": sum(a["status"] == "active" for a in state.get("assertions", [])),
         }
+        toggle = record.get("toggle_pct") or 0.0
         history = [h["functional_pct"] for h in state.get("history", [])] + [pct]
+        toggles = [h.get("toggle_pct") or 0.0 for h in state.get("history", [])] + [toggle]
         n, delta = _cfg(state, "plateau_iters"), _cfg(state, "plateau_delta")
+
+        def gain(series: list[float], i: int) -> float:
+            return series[-i] - series[-i - 1]
 
         done, reason = False, ""
         if state.get("issue") == "design_mismatch":
             done, reason = True, "reference model mismatch: possible design bug, see triage"
         elif state.get("issue") == "build_broken":
             done, reason = True, "testbench does not build, see the last run log"
-        elif pct >= _cfg(state, "target_pct"):
-            done, reason = True, f"target {_cfg(state, 'target_pct'):.1f}% reached ({pct:.2f}%)"
+        elif pct >= _cfg(state, "target_pct") and toggle >= _cfg(state, "toggle_target"):
+            done, reason = True, (f"targets reached: functional {pct:.2f}% (>= {_cfg(state, 'target_pct'):.0f}), "
+                                  f"toggle {toggle:.2f}% (>= {_cfg(state, 'toggle_target'):.0f})")
         elif it >= _cfg(state, "max_iters"):
             done, reason = True, f"max iterations ({it}) reached at {pct:.2f}%"
-        elif len(history) > n and all(history[-i] - history[-i - 1] < delta for i in range(1, n + 1)):
-            done, reason = True, f"plateau at {pct:.2f}% (gain < {delta}% for {n} iterations)"
+        elif len(history) > n and all(max(gain(history, i), gain(toggles, i)) < delta for i in range(1, n + 1)):
+            done, reason = True, f"plateau at {pct:.2f}% functional, {toggle:.2f}% toggle (gain < {delta}% for {n} iterations)"
 
         uncovered = _uncovered(res)
-        guidance = "close: " + ", ".join(uncovered[:8]) if uncovered else "functional coverage complete"
+        if uncovered:
+            guidance = "close: " + ", ".join(uncovered[:8])
+        else:
+            guidance = f"functional coverage complete; raise toggle coverage ({toggle:.1f}%)"
         kind = "rule"
         if not done:
             text = ask(prompts.ANALYST_SYSTEM, prompts.ANALYST_USER.format(
