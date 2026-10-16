@@ -9,15 +9,17 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 
 from agent.llm import get_llm  # noqa: E402
 from agent.service import VerificationService  # noqa: E402
+from designs import get_design  # noqa: E402
+from designs.base import split_assertions  # noqa: E402
 
 mcp = MCPServer(
-    "adder4-coverage-agent",
+    "rtl-coverage-agent",
     instructions=(
-        "Human-in-the-loop coverage closure for a 4-bit SystemVerilog adder. "
-        "1) propose_test -> run the returned testbench.sv + design.sv on EDA Playground "
-        "(Synopsys VCS, Cadence Xcelium or Siemens Questa). 2) submit_coverage_report with the full log; repeat with the next test it "
-        "returns until done. 3) list_mutants, run the suite testbench against each mutant, and "
-        "submit_mutation_result for each."
+        "Coverage-guided verification of small SystemVerilog designs on Verilator. "
+        "Either let the built-in agents run a session (start_session, then respond while it is paused), "
+        "or act as the test writer yourself: read describe_design, then call simulate with your own stimulus "
+        "and assertions and read back functional, toggle, branch and expression coverage. "
+        "run_mutation_testing scores a session's suite against injected bugs."
     ),
 )
 
@@ -31,72 +33,101 @@ def svc() -> VerificationService:
     return _svc
 
 
+def _result_view(res: dict) -> dict:
+    code = res.get("code") or {}
+    return {
+        "built": res.get("built"),
+        "passed": res.get("passed"),
+        "compile_errors": res.get("compile_errors", [])[:10],
+        "check_failures": res.get("check_failures", [])[:10],
+        "assertion_failures": res.get("assertion_failures", []),
+        "functional_pct": res.get("functional_pct"),
+        "point_pct": res.get("point_pct", {}),
+        "uncovered_bins": [k for k, v in res.get("bins", {}).items() if v == 0],
+        "code_coverage": {k: c.get("pct") for k, c in code.items()},
+        "missed_code_points": {k: c.get("missed", [])[:20] for k, c in code.items() if c.get("missed")},
+    }
+
+
 def _view(status: dict) -> dict:
-    out = {
+    return {
         "session_id": status["session_id"],
+        "design": status["design"],
+        "mode": status["mode"],
         "iteration": status["iteration"],
-        "coverage_pct": status["coverage_pct"],
         "done": status["done"],
         "stop_reason": status["stop_reason"],
-        "uncovered_bins": [k for k, v in status["bins"].items() if not v],
-        "point_pct": status["point_pct"],
-        "assertion_failures": status["assertion_failures"][:10],
-        "check_failures": status["check_failures"][:10],
-        "critique": status["critique"],
-        "next_focus": status["next_focus"],
+        "waiting_for": status["pending"],
+        "result": _result_view(status["result"]),
+        "analysis": status["analysis"],
+        "assertions": [{k: a.get(k) for k in ("label", "status", "reason", "code")} for a in status["assertions"]],
+        "history": status["history"],
+        "recent_events": status["events"][-12:],
     }
-    if status["pending"]:
-        out["next_test"] = status["pending"]
-    if status["done"]:
-        out["summary"] = svc().summary(status["session_id"])
-    return out
 
 
 @mcp.tool()
-def propose_test(
-    session_id: str | None = None,
+def list_designs() -> list[dict]:
+    """Designs available for verification."""
+    return svc().designs()
+
+
+@mcp.tool()
+def describe_design(design: str) -> dict:
+    """Spec, RTL, the fixed covergroup, and how to write stimulus and assertions for `simulate`."""
+    d = get_design(design)
+    return {
+        "spec": d.spec(),
+        "rtl": d.sources(),
+        "covergroup": d.covergroup(),
+        "how_to_drive": d.harness_doc,
+        "assertion_signals": d.signals,
+        "assertion_form": "<label>: assert property (@(posedge clk) <property>);",
+        "mutants": [{"id": m.id, "category": m.category, "description": m.description} for m in d.mutants],
+    }
+
+
+@mcp.tool()
+def start_session(
+    design: str,
+    mode: str = "auto",
     target_pct: float | None = None,
-    plateau_iters: int | None = None,
-    plateau_delta: float | None = None,
+    toggle_target: float | None = None,
     max_iters: int | None = None,
 ) -> dict:
-    """Start a session, or return the test the session is waiting on.
-
-    next_test has testbench.sv, design.sv and run instructions. Settings only apply to new sessions.
-    """
-    s = svc()
-    if session_id and s.exists(session_id):
-        return _view(s.status(session_id))
-    return _view(
-        s.start(
-            session_id,
-            target_pct=target_pct,
-            plateau_iters=plateau_iters,
-            plateau_delta=plateau_delta,
-            max_iters=max_iters,
-        )
-    )
+    """Start the agent loop. mode: auto (runs to the end), approval (pauses at every review gate),
+    manual (pauses so a person runs the generated run.sh). Returns where it stopped or paused."""
+    return _view(svc().start(design, mode, target_pct=target_pct, toggle_target=toggle_target,
+                             max_iters=max_iters))
 
 
 @mcp.tool()
-def submit_coverage_report(session_id: str, report: str) -> dict:
-    """Submit the full simulator log for the pending test. Returns coverage plus next_test or a summary."""
-    return _view(svc().submit_report(session_id, report))
+def get_session(session_id: str) -> dict:
+    """Current state of a session, including what it is waiting for."""
+    return _view(svc().status(session_id))
 
 
 @mcp.tool()
-def list_mutants(session_id: str) -> dict:
-    """Suite testbench plus the 10 mutant designs to run it against."""
-    s = svc()
-    data = s.mutants(session_id)
-    data["score"] = s.mutation_score(session_id)
-    return data
+def respond(session_id: str, action: str = "approve", feedback: str = "") -> dict:
+    """Answer a paused session. action: approve, reject (redo the step using feedback), or stop
+    (results step only). In manual mode, call it with approve after running the command."""
+    return _view(svc().respond(session_id, action, feedback))
 
 
 @mcp.tool()
-def submit_mutation_result(session_id: str, mutant_id: str, report: str) -> dict:
-    """Log from running the suite against one mutant (M01..M10). Returns caught/survived/invalid and the score."""
-    return svc().submit_mutation(session_id, mutant_id, report)
+def simulate(design: str, stimulus: str, assertions: str = "") -> dict:
+    """Run your own stimulus (a task body using the design's driver tasks) and optional assertions
+    inside the design's fixed testbench on Verilator. Returns pass/fail and coverage."""
+    d = get_design(design)
+    tb = d.build_testbench([{"iteration": 1, "focus": "mcp", "stimulus": stimulus}], split_assertions(assertions))
+    return _result_view(svc().simulate(design, tb))
+
+
+@mcp.tool()
+def run_mutation_testing(session_id: str) -> dict:
+    """Run the session's suite on the golden design and every mutant. Reports which mutants were caught
+    and whether assertions or the reference model caught them."""
+    return svc().run_mutation(session_id)
 
 
 if __name__ == "__main__":
