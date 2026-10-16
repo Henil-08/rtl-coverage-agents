@@ -2,7 +2,7 @@
 
 This is a human-in-the-loop agent that closes functional coverage on a 4-bit SystemVerilog adder
 (`rtl/adder4.sv`). The agent writes directed stimulus and SVA assertions. You run them on
-EDA Playground (Aldec Riviera-PRO) and paste the log back. The agent parses the coverage, decides
+EDA Playground (Synopsys VCS, Cadence Xcelium or Siemens Questa) and paste the log back. The agent parses the coverage, decides
 what is still missing, and writes the next test. It stops when coverage hits a target, plateaus,
 or reaches the iteration limit. A mutation-testing mode then scores the final suite against 10
 buggy adders.
@@ -13,10 +13,10 @@ The agent never runs a simulator itself. The simulator run is the one manual ste
 
 ```
 rtl/adder4.sv          DUT: ripple-carry adder, cout + signed overflow
-agent/tb_template.py   fixed harness: covergroup, reference scoreboard, result markers, run.do
+agent/tb_template.py   fixed harness: covergroup, reference scoreboard, result markers
 agent/nodes.py         LangGraph nodes (generate_test, await_human_input, parse_results, critique_and_loop)
 agent/graph.py         graph wiring + shared SQLite checkpointer (data/sessions.sqlite)
-agent/parser.py        regex parser for Riviera logs, LLM fallback
+agent/parser.py        regex parser for simulator logs, LLM fallback
 agent/fallback.py      deterministic generator, used when there is no API key or the LLM output is invalid
 agent/service.py       session API used by both the UI and the MCP server
 mutation/mutants.py    10 deterministic mutants
@@ -62,25 +62,20 @@ generate_test -> await_human_input (pause) -> parse_results -> critique_and_loop
 
 ## The manual EDA Playground step
 
-For each iteration, the UI (or the `propose_test` MCP tool) gives you `testbench.sv`, `design.sv`
-and a `run.do`.
+For each iteration, the UI (or the `propose_test` MCP tool) gives you `testbench.sv` and `design.sv`.
 
-1. Open https://www.edaplayground.com and log in. Riviera-PRO needs an account.
+1. Register a full EDA Playground account with your university email. VCS, Xcelium and Questa
+   are only available to validated accounts.
 2. Left panel: set **Testbench + Design** to *SystemVerilog/Verilog* and
-   **Tools & Simulators** to *Aldec Riviera Pro*.
+   **Tools & Simulators** to *Synopsys VCS*. Xcelium and Questa should also work. Leave **Use run.do** unticked.
 3. Paste `testbench.sv` into the left editor and `design.sv` into the right editor.
-4. Tick **Use run.do Tcl file** and paste:
-   ```tcl
-   vsim -acdb +access+r tb
-   run -all
-   acdb save
-   acdb report -db fcover.acdb -txt -o cov.txt -verbose
-   exec cat cov.txt
-   exit
-   ```
-5. Click **Run**. Copy the **whole** log, paste it into the app, and click **Submit results**.
+4. Click **Run**. Copy the **whole** log, paste it into the app, and click **Submit results**.
 
-The testbench prints markers that the parser reads, whatever the report format:
+Aldec Riviera-PRO does not work for this project right now. The free EDA Playground license
+fails at elaboration with `You do not have a valid license to simulate SystemVerilog assertion module`.
+
+The testbench prints markers that the parser reads, so it does not depend on any simulator's
+report format:
 
 ```
 COV_TOTAL 87.50              overall cg_adder coverage (get_inst_coverage)
@@ -90,10 +85,8 @@ ASSERT_FAIL a_it2_<name>     SVA failure
 TEST PASSED | TEST FAILED
 ```
 
-The `acdb report` part of `run.do` is optional. It adds bin-level detail (which bins are
-uncovered), which helps the agent aim. If your Riviera version rejects it, untick
-*Use run.do* and coverage still works from the markers. If the regex finds no coverage at all,
-an LLM tries to extract it. If that also fails, the UI asks you to paste again.
+If the regex finds no coverage at all, an LLM tries to extract it. If that also fails, the UI
+asks you to paste again.
 
 ## Mutation testing
 
@@ -150,7 +143,6 @@ started over MCP shows up in the app's **Resume session** list, and the reverse 
 ## Limitations
 
 - No simulator runs locally. The tests check the Python side with a fake simulator that mirrors
-  the covergroup. The SystemVerilog has not been compiled here, so the first Riviera run is the
-  real check.
-- The `acdb report` text layout differs between Riviera versions. Bin-level parsing is
-  best-effort, and the `COV_*` markers are the reliable source.
+  the covergroup.
+- The markers give coverage per coverpoint, not per bin. The parser also reads bin rows from
+  Riviera `acdb report` text if they are pasted, but other simulators' bin reports are not parsed.
