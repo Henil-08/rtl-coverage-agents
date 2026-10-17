@@ -47,60 +47,30 @@ uv run streamlit run app.py
 ## How it works
 
 ```mermaid
-flowchart TD
-    SPEC[/"spec.md + RTL"/]:::input
-
-    subgraph SETUP["Once per session"]
-        PLAN["<b>Planner</b><br/>spec → verification plan"]:::llm
-        G1{{"review plan"}}:::gate
-        ASSERT["<b>Assertion writer</b><br/>spec → SVA<br/>never sees the tests"]:::llm
-        G2{{"review assertions"}}:::gate
-    end
-
-    subgraph LOOP["Every iteration"]
-        STIM["<b>Stimulus writer</b><br/>coverage gaps → next test"]:::llm
-        G3{{"review testbench"}}:::gate
-        SIM["<b>Simulator</b><br/>Verilator build + run<br/>log + coverage.dat"]:::tool
-        TRI{"<b>Triage</b>"}:::rule
-        AN["<b>Coverage analyst</b><br/>targets met? plateau?<br/>what to cover next"]:::llm
-        G4{{"review results"}}:::gate
-    end
-
-    DONE(["Done: coverage report,<br/>then mutation testing"]):::done
-    BUG(["Stop: possible design bug"]):::bad
-
-    SPEC --> PLAN --> G1
-    G1 -- approve --> ASSERT
-    G1 -. reject .-> PLAN
-    ASSERT --> G2
-    G2 -. reject .-> ASSERT
-    G2 -- approve --> STIM
-    STIM --> G3
-    G3 -. reject .-> STIM
-    G3 -- approve --> SIM
-    SIM --> TRI
-    TRI -- "clean run" --> AN
-    TRI -- "compile error" --> STIM
-    TRI -- "bad assertion:<br/>repair or drop, rerun" --> ASSERT
-    TRI -- "reference model<br/>mismatch" --> BUG
-    AN --> G4
-    G4 -- "next iteration" --> STIM
-    G4 -- "targets met, plateau<br/>or max iterations" --> DONE
+flowchart LR
+    SPEC[/"spec + RTL"/]:::input --> PLAN["<b>Planner</b><br/>plan"]:::llm
+    PLAN --> ASSERT["<b>Assertion<br/>writer</b><br/>SVA"]:::llm
+    ASSERT --> STIM["<b>Stimulus<br/>writer</b><br/>next test"]:::llm
+    STIM --> SIM["<b>Simulator</b><br/>Verilator"]:::tool
+    SIM --> TRI{"<b>Triage</b>"}:::rule
+    TRI -- clean --> AN["<b>Coverage<br/>analyst</b>"]:::llm
+    AN -- "next iteration" --> STIM
+    AN -- "targets met" --> DONE(["Done →<br/>mutation testing"]):::done
+    TRI -. "compile error" .-> STIM
+    TRI -. "bad assertion" .-> ASSERT
+    TRI -- mismatch --> BUG(["Possible<br/>design bug"]):::bad
 
     classDef input fill:#efede6,stroke:#8a867b,color:#1c1b19
     classDef llm fill:#d7f0ec,stroke:#0f766e,stroke-width:2px,color:#0b3b37
     classDef tool fill:#dbe8fb,stroke:#2a78d6,stroke-width:2px,color:#0d2c57
     classDef rule fill:#fdecd2,stroke:#b45309,stroke-width:2px,color:#4a2604
-    classDef gate fill:#f1effa,stroke:#6250d6,stroke-dasharray:4 3,color:#2b2266
     classDef done fill:#dcf5e3,stroke:#15803d,stroke-width:2px,color:#0d3b1d
     classDef bad fill:#fde2e2,stroke:#b91c1c,stroke-width:2px,color:#5c0d0d
-    style SETUP fill:transparent,stroke:#8a867b,stroke-dasharray:6 4
-    style LOOP fill:transparent,stroke:#8a867b,stroke-dasharray:6 4
 ```
 
-Teal boxes are LLM agents, blue is the simulator tool, orange is rule-based triage, and dashed purple hexagons are review gates.
+Teal boxes are LLM agents, blue is the simulator tool, and orange is rule-based triage. Dotted arrows are repairs.
 
-Review gates pause only in approval mode. In auto mode they approve on their own, and in manual mode the simulator step waits for you to run `run.sh`.
+In approval mode the loop also pauses after the planner, the assertion writer, every stimulus block and every analysis, so you can approve or reject with feedback. In manual mode the simulator step waits for you to run `run.sh`.
 
 - **Planner** turns `spec.md` into a list of features, the coverpoints that measure each one, and the bug that could hide there.
 - **Assertion writer** writes SVA from the spec and the plan only. It never sees the stimulus, so it
