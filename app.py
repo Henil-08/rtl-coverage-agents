@@ -152,7 +152,10 @@ def gate_panel(sid: str, pending: dict) -> None:
             st.code("\n".join(a["code"] for a in pending["assertions"]), language="verilog")
         elif step == "testbench":
             st.markdown(f"**Focus:** {pending['focus']}")
-            st.code(pending["testbench"], language="verilog", line_numbers=True, height=380)
+            st.markdown("New stimulus for this iteration:")
+            st.code(pending.get("stimulus", ""), language="verilog", line_numbers=True, height=320)
+            with st.expander("Full testbench.sv"):
+                st.code(pending["testbench"], language="verilog", line_numbers=True)
         else:
             r = pending["result"]
             st.markdown(f"**{'PASS' if r.get('passed') else 'FAIL'}** · functional {r.get('functional_pct')}%")
@@ -174,17 +177,18 @@ def gate_panel(sid: str, pending: dict) -> None:
             st.rerun()
 
 
+def live_view(sid: str, launch: tuple) -> None:
+    if launch[0] == "start":
+        ui.hero("Starting session", sid, [])
+        run_live(lambda cb: svc.start(on_event=cb, **launch[1]), [])
+    else:
+        status = svc.status(sid)
+        ui.hero(get_design(status["design"]).title, sid, [])
+        run_live(lambda cb: svc.respond(sid, launch[1], launch[2], on_event=cb), status["events"], status["issue"])
+
+
 def session_view(sid: str) -> None:
     status = svc.status(sid) if svc.exists(sid) else None
-    launch = ss.pop("launch", None)
-    if launch:
-        if launch[0] == "start":
-            ui.hero("Starting session", sid, [])
-            run_live(lambda cb: svc.start(on_event=cb, **launch[1]), [])
-        else:
-            ui.hero(get_design(status["design"]).title, sid, [])
-            run_live(lambda cb: svc.respond(sid, launch[1], launch[2], on_event=cb), status["events"], status["issue"])
-        return
     if status is None or status["design"] not in DESIGNS:
         st.warning("This session cannot be opened. It may have been made by an older version of the app.")
         return
@@ -313,7 +317,16 @@ def session_view(sid: str) -> None:
                     hide_index=True, width="stretch")
 
 
-if ss.get("sid"):
-    session_view(ss["sid"])
+# Two top-level slots. While agents run, the page slot is sent as an empty element, which drops
+# every element of the previous page at once instead of leaving it faded under the live view.
+live_slot, page_slot = st.empty(), st.empty()
+launch = ss.pop("launch", None)
+if launch and ss.get("sid"):
+    with live_slot.container():
+        live_view(ss["sid"], launch)
 else:
-    setup_view()
+    with page_slot.container():
+        if ss.get("sid"):
+            session_view(ss["sid"])
+        else:
+            setup_view()

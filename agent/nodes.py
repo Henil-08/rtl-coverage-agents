@@ -342,9 +342,9 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             elif step == "assertions":
                 payload["assertions"] = state.get("assertions", [])
             elif step == "testbench":
-                payload["testbench"] = state.get("testbench", "")
-                payload["focus"] = next((b["focus"] for b in state.get("blocks", [])
-                                         if b["iteration"] == state.get("iteration")), "")
+                block = next((b for b in state.get("blocks", []) if b["iteration"] == state.get("iteration")), {})
+                payload.update(testbench=state.get("testbench", ""), focus=block.get("focus", ""),
+                               stimulus=block.get("stimulus", ""))
             else:
                 res = dict(state.get("result") or {})
                 res.pop("log", None)
