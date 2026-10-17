@@ -10,6 +10,20 @@ Two designs are included:
 - `dpram`: a true dual-port RAM (8-bit × 16, one clock, read-first, port A wins write collisions). This is the main target.
 - `adder4`: a 4-bit ripple-carry adder, kept as a quick sanity check.
 
+![Finished session on the dual-port RAM](media/session.png)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Setup](media/setup.png) **Setup.** Pick a design, a mode and the stop rule. | ![Live run](media/live_run.png) **Live run.** Each agent lights up as it works. |
+| ![Approval gate](media/approval_gate.png) **Approval mode.** Review each new stimulus block before it runs. | ![Coverage](media/coverage.png) **Coverage.** Functional coverage per coverpoint, plus toggle, branch and expression coverage of the RTL. |
+| ![Mutation testing](media/mutation.png) **Mutation testing.** Ten injected bugs, and whether the assertions or the reference model caught each one. | ![Dark theme](media/session_dark.png) **Dark theme.** |
+
+These come from a real run with Groq's `openai/gpt-oss-120b`, so they include its mistakes: an
+assertion that triage dropped after it fired on the correct design, and steps that fell back to the
+deterministic generator when Groq's free-tier rate limit hit.
+
 ## Setup
 
 Needs [uv](https://docs.astral.sh/uv/) and [Verilator](https://verilator.org) 5.050 or newer (covergroup support).
