@@ -202,6 +202,20 @@ def _pages(path: Path) -> list[tuple[int | None, str]]:
     return [(None, raw)]
 
 
+_BAD_TITLE = re.compile(r"paper title|\.book$|\.docx?$|\.pdf$|final draft|^untitled|^microsoft word|^title$|copyright|all rights reserved|^\W*$", re.I)
+
+
+def clean_title(title: str, first_text: str, fallback: str) -> str:
+    """PDF metadata titles are often junk; fall back to the first real line of the document."""
+    if title and len(title) > 6 and not _BAD_TITLE.search(title.strip()):
+        return title.strip()
+    for line in first_text.splitlines():
+        line = line.strip()
+        if 12 <= len(line) <= 120 and re.search(r"[A-Za-z]{4}", line) and not _BAD_TITLE.search(line):
+            return line
+    return fallback
+
+
 def _chunks(text: str) -> list[str]:
     text = text.encode("utf-8", "replace").decode("utf-8").replace("\x00", " ")
     words = re.sub(r"\s+", " ", text).split(" ")
@@ -240,9 +254,10 @@ def build(progress=print, embed: bool = True, local: bool = True) -> dict:
         except Exception as e:
             progress(f"{path.name}: skipped ({e})")
             continue
+        title = clean_title(doc.get("title", ""), pages[0][1] if pages else "", path.stem)
         for page, text in pages:
             for piece in _chunks(text):
-                chunks.append({"doc": doc["id"], "title": doc.get("title") or doc["id"], "url": doc.get("url", ""),
+                chunks.append({"doc": doc["id"], "title": title, "url": doc.get("url", ""),
                                "page": page, "text": piece})
                 n += 1
         progress(f"{path.name}: {n} passages")
