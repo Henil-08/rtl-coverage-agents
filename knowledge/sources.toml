@@ -1,68 +1,710 @@
-# Public documents the planner can search. `uv run python -m rag build` downloads them into
-# knowledge/docs/ (not committed: each stays under its publisher's licence) and indexes them.
-# Add a [[doc]] entry to grow the corpus, or drop PDF/HTML/Markdown files into knowledge/docs/ yourself.
+# Sources for the planner's knowledge base.
+#
+#   uv run python -m rag build      download everything below into knowledge/docs/ and index it
+#
+# Nothing downloaded is committed: every document stays under its publisher's licence and lives only
+# on your machine (knowledge/docs/ and knowledge/index/ are gitignored). To grow the corpus, add an
+# entry below or drop PDF, HTML, Markdown or text files into knowledge/docs/ and run
+# `uv run python -m rag index`.
+#
+# Entry types:
+#   [[doc]]             one URL (PDF, HTML or Markdown); the title is read from the document
+#   [[arxiv]]           an arXiv API search; every hit's PDF is downloaded, three seconds apart
+#   [[github_release]]  PDF assets of a repository's latest GitHub release
+#   [[local]]           files already on disk, matched by a glob relative to the repository root
+
+[[local]]
+glob = "third_party/uvm/src/**/*.svh"
+title = "UVM 2020 library source (verilator/uvm)"
+
+[[local]]
+glob = "third_party/uvm/docs/**/*.md"
+title = "UVM 2020 library notes (verilator/uvm)"
+
+[[github_release]]
+repo = "riscv/riscv-isa-manual"
+title = "RISC-V Instruction Set Manual"
+
+[[arxiv]]
+query = 'all:"hardware verification" AND all:"language model"'
+max = 25
+
+[[arxiv]]
+query = 'all:"functional coverage" AND cat:cs.AR'
+max = 15
+
+[[arxiv]]
+query = 'all:"assertion generation" AND cat:cs.AR'
+max = 15
+
+[[arxiv]]
+query = 'all:"testbench generation"'
+max = 10
+
+[[arxiv]]
+query = 'all:"coverage closure"'
+max = 10
+
+[[arxiv]]
+query = 'all:"design verification" AND cat:cs.AR'
+max = 20
+
+[[arxiv]]
+query = 'all:"mutation" AND all:"RTL"'
+max = 10
+
+[[arxiv]]
+query = 'all:"UVM" AND all:"verification"'
+max = 10
 
 [[doc]]
-id = "microchip_ac374"
-title = "Microchip AC374: Simultaneous Read-Write Operations in Dual-Port SRAM"
-url = "https://ww1.microchip.com/downloads/aemDocuments/documents/FPGA/ProductDocuments/ProductBrief/AC374_Read-Write+Operations+in+Dual-Port+SRAM+for+Flash-Based+cSoCs+and+FPGAs.pdf"
+id = "accellera_uvm_class_reference_manual_1_2"
+url = "https://www.accellera.org/images/downloads/standards/uvm/UVM_Class_Reference_Manual_1.2.pdf"
 
 [[doc]]
-id = "xilinx_blk_mem_gen"
-title = "Xilinx Block Memory Generator v1.1 data sheet (DS512), copy hosted by MIT"
-url = "https://web.mit.edu/neboat/Public/6.111_final_project/code/blk_mem_gen_ds512.pdf"
-
-[[doc]]
-id = "dcae_blockram"
-title = "FPGA Block RAM lecture notes (UPB DCAE)"
-url = "https://wiki.dcae.pub.ro/images/2/27/FPGA_BlockRAM.pdf"
-
-[[doc]]
-id = "accellera_uvm_ug"
-title = "Accellera UVM 1.2 User's Guide"
+id = "accellera_uvm_users_guide_1_2"
 url = "https://www.accellera.org/images/downloads/standards/uvm/uvm_users_guide_1.2.pdf"
 
 [[doc]]
-id = "verilator_simulating"
-title = "Verilator manual: Simulating (coverage, tracing, assertions)"
+id = "veripool_verilator_doc"
+url = "https://www.veripool.org/ftp/verilator_doc.pdf"
+
+[[doc]]
+id = "opentitan_dv_methodology"
+url = "https://opentitan.org/book/doc/contributing/dv/methodology/index.html"
+
+[[doc]]
+id = "opentitan_sv_dv_lib"
+url = "https://opentitan.org/book/hw/dv/sv/dv_lib/index.html"
+
+[[doc]]
+id = "opentitan_sv_cip_lib"
+url = "https://opentitan.org/book/hw/dv/sv/cip_lib/index.html"
+
+[[doc]]
+id = "opentitan_sv_mem_model"
+url = "https://opentitan.org/book/hw/dv/sv/mem_model/index.html"
+
+[[doc]]
+id = "opentitan_sv_scoreboard"
+url = "https://opentitan.org/book/hw/dv/sv/scoreboard/index.html"
+
+[[doc]]
+id = "opentitan_dv_sec_cm_dv_framework"
+url = "https://opentitan.org/book/doc/contributing/dv/sec_cm_dv_framework/index.html"
+
+[[doc]]
+id = "opentitan_util_dvsim"
+url = "https://opentitan.org/book/util/dvsim/index.html"
+
+[[doc]]
+id = "opentitan_project_governance_development_stages_html"
+url = "https://opentitan.org/book/doc/project_governance/development_stages.html"
+
+[[doc]]
+id = "ibex_core_verification"
+url = "https://ibex-core.readthedocs.io/en/latest/03_reference/verification.html"
+
+[[doc]]
+id = "verilator_latest_simulating_html"
 url = "https://verilator.org/guide/latest/simulating.html"
 
 [[doc]]
-id = "verilator_coverage"
-title = "Verilator manual: verilator_coverage"
+id = "verilator_latest_exe_verilator_coverage_html"
 url = "https://verilator.org/guide/latest/exe_verilator_coverage.html"
 
 [[doc]]
-id = "verilator_languages"
-title = "Verilator manual: language support"
+id = "verilator_latest_languages_html"
 url = "https://verilator.org/guide/latest/languages.html"
 
 [[doc]]
-id = "opentitan_prim"
-title = "OpenTitan primitives (prim) README"
+id = "verilator_latest_exe_verilator_html"
+url = "https://verilator.org/guide/latest/exe_verilator.html"
+
+[[doc]]
+id = "verilator_latest_warnings_html"
+url = "https://verilator.org/guide/latest/warnings.html"
+
+[[doc]]
+id = "verilator_latest_connecting_html"
+url = "https://verilator.org/guide/latest/connecting.html"
+
+[[doc]]
+id = "verilator_latest_faq_html"
+url = "https://verilator.org/guide/latest/faq.html"
+
+[[doc]]
+id = "verilator_latest_extensions_html"
+url = "https://verilator.org/guide/latest/extensions.html"
+
+[[doc]]
+id = "verilator_latest_verilating_html"
+url = "https://verilator.org/guide/latest/verilating.html"
+
+[[doc]]
+id = "verilator_latest_control_html"
+url = "https://verilator.org/guide/latest/control.html"
+
+[[doc]]
+id = "chipverify_systemverilog_assertions"
+url = "https://www.chipverify.com/systemverilog/systemverilog-assertions"
+
+[[doc]]
+id = "chipverify_systemverilog_functional_coverage"
+url = "https://www.chipverify.com/systemverilog/systemverilog-functional-coverage"
+
+[[doc]]
+id = "chipverify_systemverilog_covergroup_coverpoint"
+url = "https://www.chipverify.com/systemverilog/systemverilog-covergroup-coverpoint"
+
+[[doc]]
+id = "chipverify_uvm_tutorial"
+url = "https://www.chipverify.com/uvm/uvm-tutorial"
+
+[[doc]]
+id = "chipverify_uvm_scoreboard"
+url = "https://www.chipverify.com/uvm/uvm-scoreboard"
+
+[[doc]]
+id = "chipverify_uvm_driver"
+url = "https://www.chipverify.com/uvm/uvm-driver"
+
+[[doc]]
+id = "chipverify_uvm_monitor"
+url = "https://www.chipverify.com/uvm/uvm-monitor"
+
+[[doc]]
+id = "chipverify_uvm_sequence"
+url = "https://www.chipverify.com/uvm/uvm-sequence"
+
+[[doc]]
+id = "chipverify_uvm_testbench_top"
+url = "https://www.chipverify.com/uvm/uvm-testbench-top"
+
+[[doc]]
+id = "verificationguide_systemverilog_assertions"
+url = "https://verificationguide.com/systemverilog/systemverilog-assertions/"
+
+[[doc]]
+id = "verificationguide_systemverilog_functional_coverage"
+url = "https://verificationguide.com/systemverilog/systemverilog-functional-coverage/"
+
+[[doc]]
+id = "verificationguide_uvm_tutorial"
+url = "https://verificationguide.com/uvm/uvm-tutorial/"
+
+[[doc]]
+id = "asic_world_assertions"
+url = "https://www.asic-world.com/systemverilog/assertions.html"
+
+[[doc]]
+id = "asic_world_coverage"
+url = "https://www.asic-world.com/systemverilog/coverage.html"
+
+[[doc]]
+id = "doulos_systemverilog_assertions_tutorial"
+url = "https://www.doulos.com/knowhow/systemverilog/systemverilog-tutorials/systemverilog-assertions-tutorial/"
+
+[[doc]]
+id = "doulos_uvm"
+url = "https://www.doulos.com/knowhow/systemverilog/uvm/"
+
+[[doc]]
+id = "ww1_ac374_read_write_operations_in_dual_port_sram_for_flash_based_csoc"
+url = "https://ww1.microchip.com/downloads/aemDocuments/documents/FPGA/ProductDocuments/ProductBrief/AC374_Read-Write+Operations+in+Dual-Port+SRAM+for+Flash-Based+cSoCs+and+FPGAs.pdf"
+
+[[doc]]
+id = "web_blk_mem_gen_ds512"
+url = "https://web.mit.edu/neboat/Public/6.111_final_project/code/blk_mem_gen_ds512.pdf"
+
+[[doc]]
+id = "wiki_fpga_blockram"
+url = "https://wiki.dcae.pub.ro/images/2/27/FPGA_BlockRAM.pdf"
+
+[[doc]]
+id = "bdtic_ug383"
+url = "https://www.bdtic.com/download/XILINX/UG383.pdf"
+
+[[doc]]
+id = "d1_ourdev_612583gkk3x2"
+url = "https://d1.amobbs.com/bbs_upload782111/files_35/ourdev_612583GKK3X2.pdf"
+
+[[doc]]
+id = "raw_readme_md"
 url = "https://raw.githubusercontent.com/lowRISC/opentitan/master/hw/ip/prim/README.md"
 
 [[doc]]
-id = "wiki_dual_ported_ram"
-title = "Wikipedia: Dual-ported RAM"
+id = "raw_readme_rst"
+url = "https://raw.githubusercontent.com/verilator/verilator/master/README.rst"
+
+[[doc]]
+id = "en_dual_ported_ram"
 url = "https://en.wikipedia.org/wiki/Dual-ported_RAM"
 
 [[doc]]
-id = "wiki_sram"
-title = "Wikipedia: Static random-access memory"
+id = "en_static_random_access_memory"
 url = "https://en.wikipedia.org/wiki/Static_random-access_memory"
 
 [[doc]]
-id = "wiki_functional_verification"
-title = "Wikipedia: Functional verification"
+id = "en_dynamic_random_access_memory"
+url = "https://en.wikipedia.org/wiki/Dynamic_random-access_memory"
+
+[[doc]]
+id = "en_functional_verification"
 url = "https://en.wikipedia.org/wiki/Functional_verification"
 
 [[doc]]
-id = "wiki_mutation_testing"
-title = "Wikipedia: Mutation testing"
+id = "en_mutation_testing"
 url = "https://en.wikipedia.org/wiki/Mutation_testing"
 
 [[doc]]
-id = "wiki_systemverilog"
-title = "Wikipedia: SystemVerilog"
+id = "en_systemverilog"
 url = "https://en.wikipedia.org/wiki/SystemVerilog"
+
+[[doc]]
+id = "en_verilog"
+url = "https://en.wikipedia.org/wiki/Verilog"
+
+[[doc]]
+id = "en_vhdl"
+url = "https://en.wikipedia.org/wiki/VHDL"
+
+[[doc]]
+id = "en_register_transfer_level"
+url = "https://en.wikipedia.org/wiki/Register-transfer_level"
+
+[[doc]]
+id = "en_hardware_verification_language"
+url = "https://en.wikipedia.org/wiki/Hardware_verification_language"
+
+[[doc]]
+id = "en_universal_verification_methodology"
+url = "https://en.wikipedia.org/wiki/Universal_Verification_Methodology"
+
+[[doc]]
+id = "en_code_coverage"
+url = "https://en.wikipedia.org/wiki/Code_coverage"
+
+[[doc]]
+id = "en_formal_verification"
+url = "https://en.wikipedia.org/wiki/Formal_verification"
+
+[[doc]]
+id = "en_equivalence_checking"
+url = "https://en.wikipedia.org/wiki/Equivalence_checking"
+
+[[doc]]
+id = "en_model_checking"
+url = "https://en.wikipedia.org/wiki/Model_checking"
+
+[[doc]]
+id = "en_logic_simulation"
+url = "https://en.wikipedia.org/wiki/Logic_simulation"
+
+[[doc]]
+id = "en_fault_model"
+url = "https://en.wikipedia.org/wiki/Fault_model"
+
+[[doc]]
+id = "en_stuck_at_fault"
+url = "https://en.wikipedia.org/wiki/Stuck-at_fault"
+
+[[doc]]
+id = "en_built_in_self_test"
+url = "https://en.wikipedia.org/wiki/Built-in_self-test"
+
+[[doc]]
+id = "en_design_for_testing"
+url = "https://en.wikipedia.org/wiki/Design_for_testing"
+
+[[doc]]
+id = "en_automatic_test_pattern_generation"
+url = "https://en.wikipedia.org/wiki/Automatic_test_pattern_generation"
+
+[[doc]]
+id = "en_scan_chain"
+url = "https://en.wikipedia.org/wiki/Scan_chain"
+
+[[doc]]
+id = "en_fifo_computing_and_electronics"
+url = "https://en.wikipedia.org/wiki/FIFO_(computing_and_electronics)"
+
+[[doc]]
+id = "en_metastability_electronics"
+url = "https://en.wikipedia.org/wiki/Metastability_(electronics)"
+
+[[doc]]
+id = "en_clock_domain_crossing"
+url = "https://en.wikipedia.org/wiki/Clock_domain_crossing"
+
+[[doc]]
+id = "en_content_addressable_memory"
+url = "https://en.wikipedia.org/wiki/Content-addressable_memory"
+
+[[doc]]
+id = "en_register_file"
+url = "https://en.wikipedia.org/wiki/Register_file"
+
+[[doc]]
+id = "en_field_programmable_gate_array"
+url = "https://en.wikipedia.org/wiki/Field-programmable_gate_array"
+
+[[doc]]
+id = "en_application_specific_integrated_circuit"
+url = "https://en.wikipedia.org/wiki/Application-specific_integrated_circuit"
+
+[[doc]]
+id = "en_tape_out"
+url = "https://en.wikipedia.org/wiki/Tape-out"
+
+[[doc]]
+id = "en_static_timing_analysis"
+url = "https://en.wikipedia.org/wiki/Static_timing_analysis"
+
+[[doc]]
+id = "en_electronic_design_automation"
+url = "https://en.wikipedia.org/wiki/Electronic_design_automation"
+
+[[doc]]
+id = "en_integrated_circuit_design"
+url = "https://en.wikipedia.org/wiki/Integrated_circuit_design"
+
+[[doc]]
+id = "en_hardware_description_language"
+url = "https://en.wikipedia.org/wiki/Hardware_description_language"
+
+[[doc]]
+id = "en_physical_design_electronics"
+url = "https://en.wikipedia.org/wiki/Physical_design_(electronics)"
+
+[[doc]]
+id = "en_logic_synthesis"
+url = "https://en.wikipedia.org/wiki/Logic_synthesis"
+
+[[doc]]
+id = "en_finite_state_machine"
+url = "https://en.wikipedia.org/wiki/Finite-state_machine"
+
+[[doc]]
+id = "en_flip_flop_electronics"
+url = "https://en.wikipedia.org/wiki/Flip-flop_(electronics)"
+
+[[doc]]
+id = "en_clock_gating"
+url = "https://en.wikipedia.org/wiki/Clock_gating"
+
+[[doc]]
+id = "en_cache_computing"
+url = "https://en.wikipedia.org/wiki/Cache_(computing)"
+
+[[doc]]
+id = "en_memory_controller"
+url = "https://en.wikipedia.org/wiki/Memory_controller"
+
+[[doc]]
+id = "en_bus_computing"
+url = "https://en.wikipedia.org/wiki/Bus_(computing)"
+
+[[doc]]
+id = "en_advanced_microcontroller_bus_architecture"
+url = "https://en.wikipedia.org/wiki/Advanced_Microcontroller_Bus_Architecture"
+
+[[doc]]
+id = "en_wishbone_computer_bus"
+url = "https://en.wikipedia.org/wiki/Wishbone_(computer_bus)"
+
+[[doc]]
+id = "en_serial_peripheral_interface"
+url = "https://en.wikipedia.org/wiki/Serial_Peripheral_Interface"
+
+[[doc]]
+id = "en_universal_asynchronous_receiver_transmitter"
+url = "https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter"
+
+[[doc]]
+id = "en_arithmetic_logic_unit"
+url = "https://en.wikipedia.org/wiki/Arithmetic_logic_unit"
+
+[[doc]]
+id = "en_adder_electronics"
+url = "https://en.wikipedia.org/wiki/Adder_(electronics)"
+
+[[doc]]
+id = "en_carry_lookahead_adder"
+url = "https://en.wikipedia.org/wiki/Carry-lookahead_adder"
+
+[[doc]]
+id = "en_ripple_carry_adder"
+url = "https://en.wikipedia.org/wiki/Ripple-carry_adder"
+
+[[doc]]
+id = "en_two_27s_complement"
+url = "https://en.wikipedia.org/wiki/Two%27s_complement"
+
+[[doc]]
+id = "en_integer_overflow"
+url = "https://en.wikipedia.org/wiki/Integer_overflow"
+
+[[doc]]
+id = "en_random_testing"
+url = "https://en.wikipedia.org/wiki/Random_testing"
+
+[[doc]]
+id = "en_fuzzing"
+url = "https://en.wikipedia.org/wiki/Fuzzing"
+
+[[doc]]
+id = "en_regression_testing"
+url = "https://en.wikipedia.org/wiki/Regression_testing"
+
+[[doc]]
+id = "en_test_bench"
+url = "https://en.wikipedia.org/wiki/Test_bench"
+
+[[doc]]
+id = "en_property_specification_language"
+url = "https://en.wikipedia.org/wiki/Property_Specification_Language"
+
+[[doc]]
+id = "en_linear_temporal_logic"
+url = "https://en.wikipedia.org/wiki/Linear_temporal_logic"
+
+[[doc]]
+id = "en_emulator"
+url = "https://en.wikipedia.org/wiki/Emulator"
+
+[[doc]]
+id = "en_hardware_acceleration"
+url = "https://en.wikipedia.org/wiki/Hardware_acceleration"
+
+[[doc]]
+id = "en_verilator"
+url = "https://en.wikipedia.org/wiki/Verilator"
+
+[[doc]]
+id = "en_icarus_verilog"
+url = "https://en.wikipedia.org/wiki/Icarus_Verilog"
+
+[[doc]]
+id = "en_systemc"
+url = "https://en.wikipedia.org/wiki/SystemC"
+
+[[doc]]
+id = "en_chisel_programming_language"
+url = "https://en.wikipedia.org/wiki/Chisel_(programming_language)"
+
+[[doc]]
+id = "en_risc_v"
+url = "https://en.wikipedia.org/wiki/RISC-V"
+
+[[doc]]
+id = "en_opentitan"
+url = "https://en.wikipedia.org/wiki/OpenTitan"
+
+[[doc]]
+id = "en_error_correction_code"
+url = "https://en.wikipedia.org/wiki/Error_correction_code"
+
+[[doc]]
+id = "en_parity_bit"
+url = "https://en.wikipedia.org/wiki/Parity_bit"
+
+[[doc]]
+id = "en_cyclic_redundancy_check"
+url = "https://en.wikipedia.org/wiki/Cyclic_redundancy_check"
+
+[[doc]]
+id = "en_glitch"
+url = "https://en.wikipedia.org/wiki/Glitch"
+
+[[doc]]
+id = "en_race_condition"
+url = "https://en.wikipedia.org/wiki/Race_condition"
+
+[[doc]]
+id = "en_timing_closure"
+url = "https://en.wikipedia.org/wiki/Timing_closure"
+
+[[doc]]
+id = "en_signal_integrity"
+url = "https://en.wikipedia.org/wiki/Signal_integrity"
+
+[[doc]]
+id = "en_power_gating"
+url = "https://en.wikipedia.org/wiki/Power_gating"
+
+[[doc]]
+id = "en_low_power_electronics"
+url = "https://en.wikipedia.org/wiki/Low-power_electronics"
+
+[[doc]]
+id = "en_moore_27s_law"
+url = "https://en.wikipedia.org/wiki/Moore%27s_law"
+
+[[doc]]
+id = "en_semiconductor_device_fabrication"
+url = "https://en.wikipedia.org/wiki/Semiconductor_device_fabrication"
+
+[[doc]]
+id = "en_photomask"
+url = "https://en.wikipedia.org/wiki/Photomask"
+
+[[doc]]
+id = "en_wafer_electronics"
+url = "https://en.wikipedia.org/wiki/Wafer_(electronics)"
+
+[[doc]]
+id = "dvcon_proceedings_1137_accelerating_functional_verification_through_st"
+url = "https://dvcon-proceedings.org/wp-content/uploads/1137-Accelerating-Functional-Verification-through-Stabilization-of-Testbench-Using-AIML.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_practical_experience_in_automatic_functional_coverag"
+url = "https://dvcon-proceedings.org/wp-content/uploads/practical-experience-in-automatic-functional-coverage-convergence-and-reusable-collection-infrastructure-in-uvm-verification.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_fully_automated_functional_coverage_closure"
+url = "https://dvcon-proceedings.org/wp-content/uploads/fully-automated-functional-coverage-closure.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_1021_1"
+url = "https://dvcon-proceedings.org/wp-content/uploads/1021-1.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_uvm_rapid_adoption_a_practical_subset_of_uvm_paper"
+url = "https://dvcon-proceedings.org/wp-content/uploads/uvm-rapid-adoption-a-practical-subset-of-uvm-paper.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_a_novel_processor_verification_methodology_based_on_"
+url = "https://dvcon-proceedings.org/wp-content/uploads/a-novel-processor-verification-methodology-based-on-uvm.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_a_systemc_based_uvm_verification_infrastructure"
+url = "https://dvcon-proceedings.org/wp-content/uploads/a-systemc-based-uvm-verification-infrastructure.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_scalable_agile_processor_verification_using_systemc_"
+url = "https://dvcon-proceedings.org/wp-content/uploads/Scalable-agile-processor-verification-using-SystemC-UVM-and-friends.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_navigating_the_functional_coverage_black_hole_be_mor"
+url = "https://dvcon-proceedings.org/wp-content/uploads/navigating-the-functional-coverage-black-hole-be-more-effective-at-functional-coverage-modeling.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_system_verilog_assertions_verification"
+url = "https://dvcon-proceedings.org/wp-content/uploads/system-verilog-assertions-verification.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_uvm_multi_language_hands_on_integrating_a_system_c_m"
+url = "https://dvcon-proceedings.org/wp-content/uploads/uvm-multi-language-hands-on-integrating-a-system-c-model-into-a-sv-uvm-testbench.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_versatile_uvm_scoreboarding_us_paper"
+url = "https://dvcon-proceedings.org/wp-content/uploads/versatile-uvm-scoreboarding-us-paper.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_uvm_light_a_subset_of_uvm_for_rapid_adoption_paper"
+url = "https://dvcon-proceedings.org/wp-content/uploads/uvm-light-a-subset-of-uvm-for-rapid-adoption-paper.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_uvm_based_verification_of_a_risc_v_processor_core_us"
+url = "https://dvcon-proceedings.org/wp-content/uploads/uvm-based-verification-of-a-risc-v-processor-core-using-a-golden-predictor-model-and-a-configuration-layer.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_systemverilog_frameworkstm_scoreboard_an_open_source"
+url = "https://dvcon-proceedings.org/wp-content/uploads/systemverilog-frameworkstm-scoreboard-an-open-source-implementation-using-uvm.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_monitors_monitors_everywhere_who_is_monitoring_the_m"
+url = "https://dvcon-proceedings.org/wp-content/uploads/monitors-monitors-everywhere-who-is-monitoring-the-monitors.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_the_future_of_formal_model_checking_is_now"
+url = "https://dvcon-proceedings.org/wp-content/uploads/the-future-of-formal-model-checking-is-now.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_using_formal_verification_to_exhaustively_verify_soc"
+url = "https://dvcon-proceedings.org/wp-content/uploads/using-formal-verification-to-exhaustively-verify-soc-assemblies.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_no_010_silicon_bug_hunt_withdeep_sea_fishingformal_v"
+url = "https://dvcon-proceedings.org/wp-content/uploads/no-010-silicon-bug-hunt-withdeep-sea-fishingformal-verification.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_72781"
+url = "https://dvcon-proceedings.org/wp-content/uploads/72781.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_74535"
+url = "https://dvcon-proceedings.org/wp-content/uploads/74535.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_the_top_most_common_systemverilog_constrained_random"
+url = "https://dvcon-proceedings.org/wp-content/uploads/the-top-most-common-systemverilog-constrained-random-gotchas.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_test_parameter_tuning_with_blackbox_optimization_a_s"
+url = "https://dvcon-proceedings.org/wp-content/uploads/Test-Parameter-Tuning-with-Blackbox-Optimization-A-Simple-Yet-Effective-Way-to-Improve-Coverage.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_tackling_random_blind_spots_with_strategy_driven_sti"
+url = "https://dvcon-proceedings.org/wp-content/uploads/tackling-random-blind-spots-with-strategy-driven-stimulus-generation.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_75314"
+url = "https://dvcon-proceedings.org/wp-content/uploads/75314.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_connectivity_and_beyond"
+url = "https://dvcon-proceedings.org/wp-content/uploads/connectivity-and-beyond.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_a_practical_approach_to_measuring_and_improving_the_"
+url = "https://dvcon-proceedings.org/wp-content/uploads/a-practical-approach-to-measuring-and-improving-the-functional-verification-of-embedded-software.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_lets_be_formal_while_talking_about_verification_qual"
+url = "https://dvcon-proceedings.org/wp-content/uploads/lets-be-formal-while-talking-about-verification-quality-a-novel-approach-of-qualifying-assertion-based-ips-presentation.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_1135_1"
+url = "https://dvcon-proceedings.org/wp-content/uploads/1135-1.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_guiding_functional_verification_regression_analysis_"
+url = "https://dvcon-proceedings.org/wp-content/uploads/guiding-functional-verification-regression-analysis-using-machine-learning-and-big-data-methods.pdf"
+
+[[doc]]
+id = "dvcon_proceedings_1097_demystifying_formal_testbenches_tips_tricks_and"
+url = "https://dvcon-proceedings.org/wp-content/uploads/1097-Demystifying-Formal-Testbenches-Tips-Tricks-and-Recommendations.pdf"
+
+[[doc]]
+id = "engr_sva"
+url = "https://www.engr.scu.edu/~mwang2/verification/Sva.pdf"
+
+[[doc]]
+id = "staff_systemverilog_20assertions_20_20design_20tricks_20and_20sva_20bi"
+url = "http://staff.ustc.edu.cn/~wyu0725/FPGA/snug_collection/2SNUG%20Design/SystemVerilog%20Assertions%20-%20Design%20Tricks%20and%20SVA%20Bind%20Files.pdf"
+
+[[doc]]
+id = "arxiv_2512_00688"
+url = "https://arxiv.org/pdf/2512.00688"
+
+[[doc]]
+id = "arxiv_2602_15388"
+url = "https://arxiv.org/pdf/2602.15388"
+
+[[doc]]
+id = "arxiv_2605_00058"
+url = "https://arxiv.org/pdf/2605.00058"
+
+[[doc]]
+id = "arxiv_2604_03245"
+url = "https://arxiv.org/pdf/2604.03245"
+
+[[doc]]
+id = "arxiv_2209_14021"
+url = "https://arxiv.org/pdf/2209.14021"
+
+[[doc]]
+id = "arxiv_2601_19903"
+url = "https://arxiv.org/pdf/2601.19903"

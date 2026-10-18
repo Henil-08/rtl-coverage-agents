@@ -7,7 +7,10 @@ import json
 import logging
 import os
 import re
+import time
 import tomllib
+import urllib.error
+import urllib.parse
 import urllib.request
 from functools import lru_cache
 from html.parser import HTMLParser
@@ -21,33 +24,145 @@ EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 WORDS, OVERLAP = 180, 40
 
 
+REPO = ROOT.parent
+UA = {"User-Agent": "Mozilla/5.0 (rtl-coverage-agents knowledge base)"}
+
+
+def config() -> dict:
+    return tomllib.loads((ROOT / "sources.toml").read_text())
+
+
 def sources() -> list[dict]:
-    return tomllib.loads((ROOT / "sources.toml").read_text())["doc"]
+    return config().get("doc", [])
 
 
-def fetch(force: bool = False) -> list[tuple[str, str]]:
-    """Download every listed document that is not already in knowledge/docs. Returns (id, status)."""
-    DOCS.mkdir(parents=True, exist_ok=True)
-    out = []
-    for doc in sources():
-        existing = list(DOCS.glob(f"{doc['id']}.*"))
-        if existing and not force:
-            out.append((doc["id"], "cached"))
-            continue
-        req = urllib.request.Request(doc["url"], headers={"User-Agent": "Mozilla/5.0 (rtl-coverage-agents)"})
+def _meta() -> dict:
+    path = DOCS / "_meta.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def _get(url: str, timeout: int = 90) -> tuple[bytes, str]:
+    for attempt in range(4):
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                body, ctype = resp.read(), resp.headers.get("Content-Type", "")
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout) as resp:
+                return resp.read(), resp.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == 3:
+                raise
+            time.sleep(15 * (attempt + 1))
+    raise RuntimeError("unreachable")
+
+
+def _title_of(body: bytes, fallback: str) -> str:
+    if body[:4] == b"%PDF":
+        try:
+            import io
+
+            from pypdf import PdfReader
+
+            logging.getLogger("pypdf").setLevel(logging.ERROR)
+            t = (PdfReader(io.BytesIO(body)).metadata or {}).get("/Title")
+            if t and len(str(t).strip()) > 3:
+                return str(t).strip()
+        except Exception:
+            pass
+        return fallback
+    m = re.search(rb"<title[^>]*>(.*?)</title>", body[:20000], re.S | re.I)
+    if m:
+        import html
+
+        return html.unescape(m.group(1).decode("utf-8", "replace")).strip()
+    return fallback
+
+
+def _save(doc_id: str, url: str, body: bytes, title: str | None, meta: dict) -> str:
+    ext = ".pdf" if body[:4] == b"%PDF" else ".md" if url.endswith(".md") else ".html"
+    (DOCS / f"{doc_id}{ext}").write_bytes(body)
+    meta[doc_id] = {"title": title or _title_of(body, doc_id), "url": url}
+    return f"downloaded {len(body) // 1024} KB"
+
+
+def fetch(force: bool = False, progress=print) -> list[tuple[str, str]]:
+    """Download every source in sources.toml that is not already in knowledge/docs."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    DOCS.mkdir(parents=True, exist_ok=True)
+    cfg, meta, out = config(), _meta(), []
+
+    def one(doc: dict) -> tuple[str, str]:
+        if list(DOCS.glob(f"{doc['id']}.*")) and not force:
+            return doc["id"], "cached"
+        try:
+            body, ctype = _get(doc["url"])
         except Exception as e:
-            out.append((doc["id"], f"failed: {e}"))
+            return doc["id"], f"failed: {e}"
+        if body[:4] != b"%PDF" and not doc["url"].endswith(".md") and "html" not in ctype:
+            return doc["id"], f"failed: unexpected content type {ctype}"
+        return doc["id"], _save(doc["id"], doc["url"], body, doc.get("title"), meta)
+
+    with ThreadPoolExecutor(8) as pool:
+        for doc_id, status in pool.map(one, cfg.get("doc", [])):
+            out.append((doc_id, status))
+            progress(f"{doc_id:<60} {status}")
+
+    for rel in cfg.get("github_release", []):
+        try:
+            body, _ = _get(f"https://api.github.com/repos/{rel['repo']}/releases/latest")
+            assets = [a for a in json.loads(body)["assets"] if a["name"].endswith(".pdf")]
+        except Exception as e:
+            out.append((rel["repo"], f"failed: {e}"))
+            progress(f"{rel['repo']} release: failed: {e}")
             continue
-        ext = ".pdf" if body[:4] == b"%PDF" else ".md" if doc["url"].endswith(".md") else ".html"
-        if ext == ".html" and "html" not in ctype:
-            out.append((doc["id"], f"failed: unexpected content type {ctype}"))
+        for a in assets:
+            doc_id = re.sub(r"[^a-z0-9]+", "_", f"{rel['repo']}_{a['name'][:-4]}".lower())
+            if list(DOCS.glob(f"{doc_id}.*")) and not force:
+                status = "cached"
+            else:
+                try:
+                    status = _save(doc_id, a["browser_download_url"], _get(a["browser_download_url"])[0],
+                                   f"{rel.get('title', rel['repo'])}: {a['name']}", meta)
+                except Exception as e:
+                    status = f"failed: {e}"
+            out.append((doc_id, status))
+            progress(f"{doc_id:<60} {status}")
+
+    for q in cfg.get("arxiv", []):
+        time.sleep(3)
+        api = "https://export.arxiv.org/api/query?" + urllib.parse.urlencode(
+            {"search_query": q["query"], "max_results": q.get("max", 10), "sortBy": "relevance"})
+        try:
+            feed = _get(api)[0].decode("utf-8", "replace")
+        except Exception as e:
+            out.append((q["query"], f"failed: {e}"))
+            progress(f"arXiv search {q['query']!r}: failed: {e}")
             continue
-        (DOCS / f"{doc['id']}{ext}").write_bytes(body)
-        out.append((doc["id"], f"downloaded {len(body) // 1024} KB"))
+        for entry in re.findall(r"<entry>(.*?)</entry>", feed, re.S):
+            arx = re.search(r"<id>https?://arxiv.org/abs/([^<]+)</id>", entry).group(1)
+            title = re.sub(r"\s+", " ", re.search(r"<title>(.*?)</title>", entry, re.S).group(1)).strip()
+            doc_id = "arxiv_" + re.sub(r"[^a-z0-9]+", "_", arx.lower())
+            if list(DOCS.glob(f"{doc_id}.*")) and not force:
+                status = "cached"
+            else:
+                time.sleep(3)
+                try:
+                    status = _save(doc_id, f"https://arxiv.org/abs/{arx}", _get(f"https://arxiv.org/pdf/{arx}")[0],
+                                   f"arXiv {arx}: {title}", meta)
+                except Exception as e:
+                    status = f"failed: {e}"
+            out.append((doc_id, status))
+            progress(f"{doc_id:<60} {status}")
+
+    (DOCS / "_meta.json").write_text(json.dumps(meta, indent=1))
     return out
+
+
+def _local_files() -> list[tuple[Path, dict]]:
+    files = []
+    for loc in config().get("local", []):
+        for path in sorted(REPO.glob(loc["glob"])):
+            rel = path.relative_to(REPO)
+            files.append((path, {"id": str(rel), "title": f"{loc['title']}: {rel.name}", "url": str(rel)}))
+    return files
 
 
 class _Text(HTMLParser):
@@ -88,6 +203,7 @@ def _pages(path: Path) -> list[tuple[int | None, str]]:
 
 
 def _chunks(text: str) -> list[str]:
+    text = text.encode("utf-8", "replace").decode("utf-8").replace("\x00", " ")
     words = re.sub(r"\s+", " ", text).split(" ")
     out = []
     for start in range(0, max(1, len(words) - OVERLAP), WORDS - OVERLAP):
@@ -109,18 +225,25 @@ def _embedder():
     return TextEmbedding(EMBED_MODEL, cache_dir=str(MODELS))
 
 
-def build(progress=print, embed: bool = True) -> dict:
-    """Chunk every file in knowledge/docs and write the index."""
-    meta = {d["id"]: d for d in sources()}
+def build(progress=print, embed: bool = True, local: bool = True) -> dict:
+    """Chunk every downloaded document plus the local sources and write the index."""
+    known = {d["id"]: d for d in sources()} | _meta()
+    files = [(p, {"id": p.stem, "title": p.name, "url": "", **known.get(p.stem, {})})
+             for p in sorted(DOCS.glob("*")) if p.suffix in (".pdf", ".html", ".htm", ".md", ".txt")]
+    if local:
+        files += _local_files()
     chunks = []
-    for path in sorted(DOCS.glob("*")):
-        if path.suffix not in (".pdf", ".html", ".htm", ".md", ".txt"):
-            continue
-        doc = meta.get(path.stem, {"id": path.stem, "title": path.name, "url": ""})
+    for path, doc in files:
         n = 0
-        for page, text in _pages(path):
+        try:
+            pages = _pages(path)
+        except Exception as e:
+            progress(f"{path.name}: skipped ({e})")
+            continue
+        for page, text in pages:
             for piece in _chunks(text):
-                chunks.append({"doc": doc["id"], "title": doc["title"], "url": doc["url"], "page": page, "text": piece})
+                chunks.append({"doc": doc["id"], "title": doc.get("title") or doc["id"], "url": doc.get("url", ""),
+                               "page": page, "text": piece})
                 n += 1
         progress(f"{path.name}: {n} passages")
     INDEX.mkdir(parents=True, exist_ok=True)
@@ -129,7 +252,12 @@ def build(progress=print, embed: bool = True) -> dict:
     try:
         if not embed:
             raise RuntimeError("disabled")
-        vecs = np.array(list(_embedder().passage_embed([c["text"] for c in chunks])), dtype=np.float32)
+        model, vecs = _embedder(), []
+        texts = [c["text"] for c in chunks]
+        for start in range(0, len(texts), 512):
+            vecs.extend(model.passage_embed(texts[start:start + 512]))
+            progress(f"embedded {min(start + 512, len(texts))}/{len(texts)} passages")
+        vecs = np.array(vecs, dtype=np.float32)
         vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
         np.save(INDEX / "vectors.npy", vecs)
         embedded = True

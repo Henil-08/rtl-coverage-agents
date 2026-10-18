@@ -1,6 +1,7 @@
 """uv run python -m rag build | fetch | index | search "query" """
 
 import sys
+from collections import Counter
 
 from rag import kb
 
@@ -8,8 +9,9 @@ from rag import kb
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "build"
     if cmd in ("build", "fetch"):
-        for doc_id, status in kb.fetch():
-            print(f"{doc_id:<28} {status}")
+        results = kb.fetch()
+        counts = Counter("failed" if s.startswith("failed") else "ok" for _, s in results)
+        print(f"\n{counts['ok']} documents ready, {counts['failed']} failed")
     if cmd in ("build", "index"):
         print(kb.build())
     if cmd == "search":

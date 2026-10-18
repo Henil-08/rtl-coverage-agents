@@ -24,7 +24,7 @@ def tiny_kb(tmp_path, monkeypatch):
 
 
 def test_build_and_keyword_search(tiny_kb):
-    info = kb.build(progress=lambda *_: None, embed=False)
+    info = kb.build(progress=lambda *_: None, embed=False, local=False)
     assert info["docs"] == 6 and info["chunks"] >= 2 and info["embeddings"] is False
     base = kb.load()
     top = base.search("both ports write the same address collision", 1)[0]
@@ -37,7 +37,7 @@ def test_planner_cites_passages_for_every_feature(tiny_kb, tmp_path):
     from agent.nodes import cite, retrieve
     from designs import get_design
 
-    kb.build(progress=lambda *_: None, embed=False)
+    kb.build(progress=lambda *_: None, embed=False, local=False)
     d = get_design("dpram")
     hits = retrieve(d)
     assert hits and all(h["ref"].startswith("S") for h in hits)
