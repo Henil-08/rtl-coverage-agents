@@ -3,11 +3,15 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import ui
+from agent import report
+from agent import wave as W
 from agent.llm import DEFAULT_MODEL, get_llm
 from agent.service import VerificationService
 from agent.state import DEFAULTS
@@ -127,6 +131,42 @@ def setup_view() -> None:
         st.rerun()
 
 
+@st.cache_data(show_spinner=False, max_entries=16)
+def load_wave(path: str, mtime: float) -> W.Wave:
+    return W.read_vcd(path)
+
+
+def wave_panel(path: str, failures: list[dict], d, key: str) -> None:
+    """WaveDrom view of a run: a window around any failure, or browse the whole run."""
+    if not path or not Path(path).exists():
+        st.html('<div class="empty">No waveform for this run.</div>')
+        return
+    w = load_wave(path, Path(path).stat().st_mtime)
+    total = W.total_cycles(w, d.clock)
+    fail_cycles = [W.cycle_of(w, d.clock, f["time"]) for f in failures]
+    choices = [f"cycle {c} · {f['kind']} · {f['label']}: {f['text'][:70]}" for c, f in zip(fail_cycles, failures)]
+    choices.append("Browse the whole run")
+    top = [n for n in w.names() if n.count(".") == 1 and n != d.clock] + \
+          [n for n in w.names() if n.startswith(d.dut_hier + ".") and n.count(".") == 2]
+    c1, c2, c3 = st.columns([3, 2, 1])
+    view = c1.selectbox("Show", choices, key=f"{key}_view")
+    sigs = c2.multiselect("Signals", top, default=[s for s in d.wave_signals if s in w.signals], key=f"{key}_sigs")
+    width = c3.number_input("Cycles", 8, 64, 16, key=f"{key}_width")
+    if view == choices[-1]:
+        start = st.slider("Start cycle", 0, max(1, total - width), 0, key=f"{key}_start")
+        title = f"cycles {start}-{start + width - 1} of {total}"
+    else:
+        c = fail_cycles[choices.index(view)]
+        start, title = max(0, c - width // 2), f"failure at cycle {c}"
+    diagram = W.wavedrom(w, sigs, d.clock, start, width, marks=fail_cycles, title=title)
+    rows = len(diagram["signal"])
+    components.html(W.html(diagram, dark=ui.theme() == "dark"), height=rows * 31 + 90)
+    st.download_button("Download VCD", Path(path).read_bytes(), file_name=Path(path).parent.name + ".vcd",
+                       key=f"{key}_dl", icon=":material/download:")
+    st.caption("Sampled one column per rising clock edge. Open the VCD in GTKWave or Surfer for every signal "
+               "and full time resolution.")
+
+
 def gate_panel(sid: str, pending: dict) -> None:
     step = pending["step"]
     with st.container(key="gate"):
@@ -235,8 +275,38 @@ def session_view(sid: str) -> None:
     if status["done"] and status["issue"] == "design_mismatch" and status["triage_note"]:
         st.error(f"Triage: {status['triage_note']}")
 
-    progress, plan_tab, cov_tab, tb_tab, mut_tab = st.tabs(
-        ["Progress", "Plan & assertions", "Coverage", "Testbench", "Mutation testing"])
+    progress, report_tab, wave_tab, plan_tab, cov_tab, tb_tab, mut_tab = st.tabs(
+        ["Progress", "Report", "Waveforms", "Plan & assertions", "Coverage", "Testbench", "Mutation testing"])
+
+    with report_tab:
+        if not status["history"]:
+            st.html('<div class="empty">The report fills in after the first iteration.</div>')
+        else:
+            md = report.markdown(status, d, mut)
+            b1, b2, _ = st.columns([1, 1, 3])
+            b1.download_button("report.md", md, file_name=f"{sid}_report.md", icon=":material/description:")
+            b2.download_button("Everything (.zip)", report.bundle(status, d, mut, svc.suite(sid) or ""),
+                               file_name=f"{sid}.zip", icon=":material/folder_zip:",
+                               help="Report, session JSON, final testbench, RTL and every waveform.")
+            body = md.split("\n", 1)[1].replace("\n### ", "\n##### ").replace("\n## ", "\n#### ")
+            st.markdown(body)
+
+    with wave_tab:
+        runs = [r for r in status.get("runs", []) if r.get("wave")]
+        if not runs:
+            st.html('<div class="empty">No waveforms yet.</div>')
+        else:
+            def label(r):
+                verdict = "build failed" if not r["built"] else ("PASS" if r["passed"] else "FAIL")
+                return f"run {r['n']} · iteration {r['iteration']} · {verdict} · {len(r['failures'])} failures"
+            failing = [i for i, r in enumerate(runs) if r["failures"]]
+            pick = st.selectbox("Simulation run", range(len(runs)), format_func=lambda i: label(runs[i]),
+                                index=failing[-1] if failing else len(runs) - 1)
+            r = runs[pick]
+            if r["failures"]:
+                st.dataframe(pd.DataFrame(r["failures"])[["time", "kind", "label", "text"]], hide_index=True,
+                             width="stretch", height=min(36 * len(r["failures"]) + 38, 220))
+            wave_panel(r["wave"], r["failures"], d, key=f"run{r['n']}")
 
     with progress:
         left, right = st.columns([3, 2], gap="large")
@@ -315,6 +385,13 @@ def session_view(sid: str) -> None:
                 st.dataframe(pd.DataFrame(mut["results"])[
                     ["id", "category", "description", "verdict", "by_assertion", "by_scoreboard"]],
                     hide_index=True, width="stretch")
+                caught = [r for r in mut["results"] if r.get("failures")]
+                if caught:
+                    st.markdown("**How each caught mutant shows up in the waveform**")
+                    pick = st.selectbox("Mutant", range(len(caught)),
+                                        format_func=lambda i: f"{caught[i]['id']} · {caught[i]['description']}")
+                    m = caught[pick]
+                    wave_panel(m.get("wave", ""), m["failures"], d, key=f"mut{m['id']}")
 
 
 # Two top-level slots. While agents run, the page slot is sent as an empty element, which drops
