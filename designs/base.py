@@ -51,8 +51,11 @@ class Design:
     def spec(self) -> str:
         return (self.root / "spec.md").read_text()
 
-    def template(self) -> str:
-        return (self.root / "harness.sv").read_text()
+    def languages(self) -> list[str]:
+        return [lang for lang, f in (("sv", "harness.sv"), ("uvm", "harness_uvm.sv")) if (self.root / f).exists()]
+
+    def template(self, lang: str = "sv") -> str:
+        return (self.root / ("harness_uvm.sv" if lang == "uvm" else "harness.sv")).read_text()
 
     def covergroup(self) -> str:
         m = re.search(r"^\s*covergroup\b.*?^\s*endgroup", self.template(), re.S | re.M)
@@ -64,7 +67,26 @@ class Design:
         srcs[target] = mutant.apply(srcs[target])
         return srcs
 
-    def build_testbench(self, blocks: list[dict], assertions: list[dict]) -> str:
+    def build_testbench(self, blocks: list[dict], assertions: list[dict], lang: str = "sv") -> str:
+        active = [a["code"] for a in assertions if a.get("status", "active") == "active"]
+        out = self.template(lang)
+        out = out.replace("  // @ASSERTIONS", indent("\n".join(active), 2) if active else "  // no assertions")
+        if lang == "uvm":
+            seqs, calls = [], []
+            for blk in blocks:
+                it = blk["iteration"]
+                seqs.append(
+                    f"  // iteration {it}: {blk.get('focus', '').strip()}\n"
+                    f"  class seq_it{it} extends base_seq;\n"
+                    f"    `uvm_object_utils(seq_it{it})\n"
+                    f"    function new(string name = \"seq_it{it}\"); super.new(name); endfunction\n"
+                    f"    task body();\n{indent(blk['stimulus'], 6)}\n    endtask\n"
+                    f"  endclass"
+                )
+                calls.append(f"      begin\n        seq_it{it} s = seq_it{it}::type_id::create(\"seq_it{it}\");\n"
+                             f"        s.start(env.agent.sqr);\n      end")
+            out = out.replace("  // @SEQUENCES", "\n\n".join(seqs) or "  // no sequences yet")
+            return out.replace("      // @SEQUENCE_CALLS", "\n".join(calls) or "      // no sequences yet")
         tasks, calls = [], []
         for blk in blocks:
             it = blk["iteration"]
@@ -73,12 +95,8 @@ class Design:
                 f"  task automatic stim_it{it}();\n{indent(blk['stimulus'], 4)}\n  endtask"
             )
             calls.append(f"    stim_it{it}();")
-        active = [a["code"] for a in assertions if a.get("status", "active") == "active"]
-        out = self.template()
-        out = out.replace("  // @ASSERTIONS", indent("\n".join(active), 2) if active else "  // no assertions")
         out = out.replace("  // @STIMULUS_TASKS", "\n\n".join(tasks) or "  // no stimulus yet")
-        out = out.replace("    // @STIMULUS_CALLS", "\n".join(calls) or "    // no stimulus yet")
-        return out
+        return out.replace("    // @STIMULUS_CALLS", "\n".join(calls) or "    // no stimulus yet")
 
 
 def indent(text: str, spaces: int) -> str:
