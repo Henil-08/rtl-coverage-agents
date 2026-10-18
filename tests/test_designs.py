@@ -1,4 +1,5 @@
 import random
+from pathlib import Path
 
 import pytest
 
@@ -108,3 +109,34 @@ def test_dpram_reference_model_and_assertions_catch_mutants(tmp_path):
         if r.passed:
             survivors.append(m.id)
     assert survivors == ["M10"]
+
+
+needs_uvm = pytest.mark.skipif(
+    not verilator_available() or not (Path(__file__).resolve().parent.parent / "third_party/uvm/src/uvm_pkg.sv").exists(),
+    reason="verilator or the UVM submodule is missing")
+
+
+@needs_uvm
+@pytest.mark.parametrize("name", sorted(DESIGNS))
+def test_uvm_bench_matches_systemverilog_bench(name, tmp_path):
+    d = DESIGNS[name]
+    assert "uvm" in d.languages()
+    focus, stim = d.fallback(1, {}, [])
+    blocks = [{"iteration": 1, "focus": focus, "stimulus": stim}]
+    asserts = split_assertions(d.default_assertions)
+    sv = simulate(tmp_path / "sv", d.sources(), d.build_testbench(blocks, asserts), d.dut_hier)
+    uvm = simulate(tmp_path / "uvm", d.sources(), d.build_testbench(blocks, asserts, "uvm"), d.dut_hier, uvm=True)
+    assert uvm.built and uvm.passed is True, uvm.compile_errors or uvm.log[-1500:]
+    assert {k for k, v in uvm.bins.items() if v} == {k for k, v in sv.bins.items() if v}
+    assert uvm.wave and uvm.code["toggle"]["total"] > 0
+
+
+@needs_uvm
+def test_uvm_bench_catches_a_mutant_by_assertion_and_scoreboard(tmp_path):
+    from designs.dpram import DESIGN, LIBRARY
+
+    tb = DESIGN.build_testbench([{"iteration": 1, "stimulus": "\n".join(s for _, _, s in LIBRARY)}],
+                                split_assertions(DESIGN.default_assertions), "uvm")
+    r = simulate(tmp_path, DESIGN.mutant_sources(DESIGN.mutants[3]), tb, uvm=True)
+    assert r.passed is False and "a_ww_a_wins" in r.assertion_failures and r.check_failures
+    assert any(f["kind"] == "assertion" for f in r.failures)

@@ -145,3 +145,14 @@ def test_report_and_bundle_cover_the_whole_session(make_svc):
     names = zipfile.ZipFile(io.BytesIO(report.bundle(svc.status("rep"), d, mut, svc.suite("rep")))).namelist()
     assert "report.md" in names and "testbench.sv" in names
     assert any(n.startswith("waves/run_") for n in names) and any(n.startswith("waves/mutant_") for n in names)
+
+
+def test_uvm_session_runs_end_to_end(make_svc):
+    from pathlib import Path
+
+    if not (Path(__file__).resolve().parent.parent / "third_party/uvm/src/uvm_pkg.sv").exists():
+        pytest.skip("UVM submodule missing")
+    st = make_svc().start("adder4", "auto", language="uvm", max_iters=2)
+    assert st["language"] == "uvm" and st["result"]["built"]
+    assert "class seq_it1 extends base_seq" in st["testbench"]
+    assert st["result"]["functional_pct"] > 90

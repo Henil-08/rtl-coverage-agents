@@ -27,6 +27,12 @@ MODES = {
     "manual": ("Manual", "The agents write each test; you run the generated run.sh in a terminal and tell "
                          "them when it is done."),
 }
+LANG_HELP = {
+    "sv": "Plain SystemVerilog testbench: driver tasks, an inline reference model and a covergroup. "
+          "Builds in about 2 seconds.",
+    "uvm": "UVM testbench: sequence items and sequences, driver, monitor, scoreboard and a coverage "
+           "subscriber. Same coverage model, but each build takes about 10-20 seconds on Verilator.",
+}
 BLURB = {
     "dpram": "Two ports, one clock, read-first, port A wins write collisions. Collisions and "
              "read-after-write across ports make coverage hard to hit by chance.",
@@ -103,6 +109,12 @@ def setup_view() -> None:
             f'{ui.chip(f"{len(d.mutants)} mutants")}{ui.chip(", ".join(d.rtl_files))}</div></div>')
 
     st.space("small")
+    langs = d.languages()
+    language = st.segmented_control("Testbench", langs, default="sv",
+                                    format_func=lambda x: "UVM" if x == "uvm" else "SystemVerilog") or "sv"
+    st.caption(LANG_HELP[language])
+
+    st.space("small")
     mode = st.segmented_control("Mode", list(MODES), default="auto", format_func=lambda m: MODES[m][0]) or "auto"
     st.caption(MODES[mode][1])
 
@@ -125,7 +137,7 @@ def setup_view() -> None:
     if st.button("Start session", type="primary", icon=":material/play_arrow:"):
         sid = f"{design}-{uuid.uuid4().hex[:6]}"
         ss["sid"] = sid
-        ss["launch"] = ("start", dict(design=design, mode=mode, thread_id=sid, target_pct=target,
+        ss["launch"] = ("start", dict(design=design, mode=mode, language=language, thread_id=sid, target_pct=target,
                                       toggle_target=toggle, max_iters=max_iters, plateau_iters=window,
                                       plateau_delta=delta))
         st.rerun()
@@ -243,7 +255,8 @@ def session_view(sid: str) -> None:
     else:
         state = ui.chip("stopped")
     ui.hero(d.title, status["stop_reason"] or "In progress",
-            [ui.chip(sid), ui.chip(f"{status['mode']} mode"), state])
+            [ui.chip(sid), ui.chip("UVM" if status["language"] == "uvm" else "SystemVerilog"),
+             ui.chip(f"{status['mode']} mode"), state])
 
     st.html(ui.pipeline_html(status["events"], issue=status["issue"]))
 
