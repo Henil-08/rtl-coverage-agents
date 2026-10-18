@@ -55,16 +55,17 @@ class VerificationService:
         return self.status(thread_id)
 
     def start(self, design: str, mode: str = "auto", thread_id: str | None = None,
-              on_event: Callable[[dict], None] | None = None, **settings: Any) -> dict:
-        get_design(design)
+              on_event: Callable[[dict], None] | None = None, language: str = "sv", **settings: Any) -> dict:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
+        if language not in get_design(design).languages():
+            raise ValueError(f"{design} has no {language} testbench; choose from {get_design(design).languages()}")
         thread_id = thread_id or f"{design}-{uuid.uuid4().hex[:6]}"
         if self.exists(thread_id):
             return self.status(thread_id)
         init = dict(DEFAULTS)
         init.update({k: v for k, v in settings.items() if k in DEFAULTS and v is not None})
-        init.update(design=design, mode=mode, run_root=str(self.runs_dir / thread_id),
+        init.update(design=design, mode=mode, language=language, run_root=str(self.runs_dir / thread_id),
                     iteration=0, blocks=[], assertions=[], history=[], events=[], runs=[], covered=[],
                     llm_model=self.llm_model or "none (deterministic fallbacks)")
         return self._drive(init, thread_id, on_event)
@@ -86,6 +87,7 @@ class VerificationService:
             "session_id": thread_id,
             "exists": bool(v),
             "design": v.get("design"),
+            "language": v.get("language", "sv"),
             "mode": v.get("mode"),
             "iteration": v.get("iteration", 0),
             "done": bool(v.get("done")),
@@ -117,14 +119,16 @@ class VerificationService:
         v = self.graph.get_state(self._config(thread_id)).values or {}
         if not v.get("blocks"):
             return None
-        return get_design(v["design"]).build_testbench(v["blocks"], v.get("assertions", []))
+        return get_design(v["design"]).build_testbench(v["blocks"], v.get("assertions", []), v.get("language", "sv"))
 
     def run_mutation(self, thread_id: str, workers: int = 4) -> dict:
         v = self.graph.get_state(self._config(thread_id)).values or {}
         tb = self.suite(thread_id)
         if tb is None:
             raise ValueError(f"session {thread_id} has no test suite yet")
-        report = run_mutants(get_design(v["design"]), tb, self.runs_dir / thread_id / "mutants", workers)
+        uvm = v.get("language") == "uvm"
+        report = run_mutants(get_design(v["design"]), tb, self.runs_dir / thread_id / "mutants",
+                             min(workers, 3) if uvm else workers, uvm)
         report["suite_hash"] = _hash(tb)
         with self._lock:
             self._conn.execute("INSERT OR REPLACE INTO mutation_runs VALUES (?, ?, ?, ?)",
@@ -151,6 +155,7 @@ class VerificationService:
             "session_id": thread_id,
             "design": st["design"],
             "mode": st["mode"],
+            "language": st["language"],
             "iterations": len(st["history"]),
             "simulations": sum(e["agent"] == "simulator" for e in st["events"]),
             "functional_pct": res.get("functional_pct"),
@@ -163,14 +168,16 @@ class VerificationService:
                 "caught", "total", "caught_by_assertions", "survived", "score_pct", "stale")},
         }
 
-    def simulate(self, design: str, testbench: str, sources: dict[str, str] | None = None) -> dict:
+    def simulate(self, design: str, testbench: str, sources: dict[str, str] | None = None,
+                 language: str = "sv") -> dict:
         """Run any testbench against a design, or against replacement sources, and return the parsed result."""
         d = get_design(design)
         res = simulate(self.runs_dir / "adhoc" / uuid.uuid4().hex[:8], sources or d.sources(),
-                       testbench, d.dut_hier).to_dict()
+                       testbench, d.dut_hier, language == "uvm").to_dict()
         res["log"] = res["log"][-6000:]
         return res
 
     @staticmethod
     def designs() -> list[dict]:
-        return [{"name": d.name, "title": d.title, "mutants": len(d.mutants)} for d in DESIGNS.values()]
+        return [{"name": d.name, "title": d.title, "mutants": len(d.mutants), "languages": d.languages()}
+                for d in DESIGNS.values()]

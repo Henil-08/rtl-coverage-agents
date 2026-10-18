@@ -37,6 +37,7 @@ def markdown(status: dict, design, mutation: dict | None) -> str:
             f"| Session | `{status['session_id']}` |",
             f"| Design | `{design.name}` ({', '.join(design.rtl_files)}) |",
             f"| Mode | {status['mode']} |",
+            f"| Testbench | {'UVM' if status.get('language') == 'uvm' else 'SystemVerilog'} |",
             f"| LLM | {status.get('llm_model') or '-'} |",
             f"| Started / finished | {_when(start)} / {_when(end)} |",
             f"| Iterations | {len(status['history'])} |",

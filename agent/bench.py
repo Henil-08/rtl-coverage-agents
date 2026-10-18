@@ -23,9 +23,9 @@ from designs.base import split_assertions
 OUT = Path(__file__).resolve().parent.parent / "bench"
 
 
-def agent_curve(design: str, work: Path, llm=None, **settings) -> tuple[list[dict], str]:
+def agent_curve(design: str, work: Path, llm=None, language: str = "sv", **settings) -> tuple[list[dict], str]:
     svc = VerificationService(llm=llm, db_path=work / "agent.sqlite", runs_dir=work / "agent_runs")
-    st = svc.start(design, "auto", thread_id="bench", **settings)
+    st = svc.start(design, "auto", thread_id="bench", language=language, **settings)
     points = []
     for e, h in zip([e for e in st["events"] if e["agent"] == "coverage_analyst"], st["history"]):
         points.append({"iteration": h["iteration"], "functional_pct": h["functional_pct"],
@@ -48,14 +48,15 @@ def _stimulus_counts(run_root: Path) -> list[int]:
     return [best[k] for k in sorted(best)]
 
 
-def random_curve(design: str, seed: int, per_iter: int, iters: int, work: Path) -> tuple[list[dict], str]:
+def random_curve(design: str, seed: int, per_iter: int, iters: int, work: Path,
+                 language: str = "sv") -> tuple[list[dict], str]:
     d = get_design(design)
     rng = random.Random(seed)
     blocks, points, tb = [], [], ""
     for it in range(1, iters + 1):
         blocks.append({"iteration": it, "focus": f"random seed {seed}", "stimulus": d.random_stimulus(rng, per_iter)})
-        tb = d.build_testbench(blocks, [])
-        r = simulate(work / f"rand_{seed}_{it:02d}", d.sources(), tb, d.dut_hier)
+        tb = d.build_testbench(blocks, [], language)
+        r = simulate(work / f"rand_{seed}_{it:02d}", d.sources(), tb, d.dut_hier, language == "uvm")
         points.append({"iteration": it, "stimulus": r.stimulus_count, "functional_pct": r.functional_pct,
                        "toggle_pct": r.code["toggle"]["pct"]})
         if r.functional_pct == 100.0 and (r.code["toggle"]["pct"] or 0) >= 100.0:
@@ -75,6 +76,7 @@ def main() -> None:
     ap.add_argument("--iters", type=int, default=20, help="max random iterations")
     ap.add_argument("--llm", action="store_true", help="use the Groq LLM for the agent run")
     ap.add_argument("--mutants", action="store_true", help="also score each final suite with mutation testing")
+    ap.add_argument("--lang", default="sv", choices=["sv", "uvm"], help="testbench language")
     args = ap.parse_args()
 
     d = get_design(args.design)
@@ -83,13 +85,13 @@ def main() -> None:
     rows = []
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        agent_pts, agent_tb = agent_curve(args.design, work, get_llm() if args.llm else None)
+        agent_pts, agent_tb = agent_curve(args.design, work, get_llm() if args.llm else None, args.lang)
         label = "agent+llm" if args.llm else "agent"
         rows += [{"run": label, **p} for p in agent_pts]
         summary = {label: (first_reaching(agent_pts, "functional_pct", 100.0),
                            first_reaching(agent_pts, "toggle_pct", 90.0), agent_tb)}
         for seed in range(args.seeds):
-            pts, tb = random_curve(args.design, seed, args.per_iter, args.iters, work)
+            pts, tb = random_curve(args.design, seed, args.per_iter, args.iters, work, args.lang)
             rows += [{"run": f"random_{seed}", **p} for p in pts]
             summary[f"random_{seed}"] = (first_reaching(pts, "functional_pct", 100.0),
                                          first_reaching(pts, "toggle_pct", 90.0), tb)
@@ -98,7 +100,7 @@ def main() -> None:
         if args.mutants:
             for name, (_, _, tb) in summary.items():
                 suite = tb.replace("  // no assertions", "\n".join("  " + a["code"] for a in assertions))
-                rep = run_mutants(d, suite, work / f"mut_{name}")
+                rep = run_mutants(d, suite, work / f"mut_{name}", uvm=args.lang == "uvm")
                 scores[name] = f"{rep.get('caught', '?')}/{rep.get('total', '?')}" if rep["golden_ok"] else "suite broke"
 
     csv_path = OUT / f"{args.design}_{'llm' if args.llm else 'fallback'}.csv"

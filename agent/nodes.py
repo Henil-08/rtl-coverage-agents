@@ -15,6 +15,8 @@ from designs import get_design
 from designs.base import dedupe_labels, split_assertions, strip_fences, valid_stimulus
 
 MAX_COMPILE_RETRIES = 2
+UVM_NOTE = ("\nThis session uses a UVM testbench: your stimulus becomes the body() of a uvm_sequence that "
+            "extends base_seq, which provides exactly these tasks. Do not declare classes or use uvm_do macros.")
 MAX_REPAIRS = 1
 
 
@@ -137,7 +139,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
 
         out: dict = {"assertions": assertions, "feedback": "", "issue": "", "issue_detail": "", "events": events}
         if state.get("blocks"):
-            out["testbench"] = d.build_testbench(state["blocks"], assertions)
+            out["testbench"] = d.build_testbench(state["blocks"], assertions, state.get("language", "sv"))
         return out
 
     def stimulus_writer(state: VerifState) -> dict:
@@ -161,7 +163,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             fp = result.get("functional_pct")
             text = ask(prompts.STIMULUS_SYSTEM, prompts.STIMULUS_USER.format(
                 spec=d.spec(),
-                harness=d.harness_doc,
+                harness=d.harness_doc + (UVM_NOTE if state.get("language") == "uvm" else ""),
                 covergroup=d.covergroup(),
                 plan=json.dumps(state.get("plan", []), indent=1),
                 iteration=it,
@@ -189,7 +191,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             "iteration": it,
             "attempts": attempts,
             "blocks": blocks,
-            "testbench": d.build_testbench(blocks, state.get("assertions", [])),
+            "testbench": d.build_testbench(blocks, state.get("assertions", []), state.get("language", "sv")),
             "generator": kind,
             "issue": "",
             "issue_detail": "",
@@ -205,7 +207,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         else:
             n = state.get("sim_runs", 0) + 1
             run_dir = Path(state.get("run_root", str(runs_dir))) / f"run_{n:03d}_iter{state['iteration']:02d}"
-        prepare(run_dir, d.sources(), state["testbench"])
+        prepare(run_dir, d.sources(), state["testbench"], uvm=state.get("language") == "uvm")
         if _cfg(state, "mode") == "manual":
             interrupt({
                 "step": "run_simulation",

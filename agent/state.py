@@ -8,6 +8,7 @@ MODES = ("auto", "approval", "manual")
 
 class VerifState(TypedDict, total=False):
     design: str
+    language: str
     mode: str
     target_pct: float
     toggle_target: float

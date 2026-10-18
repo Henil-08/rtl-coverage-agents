@@ -7,16 +7,16 @@ from agent.sim import simulate
 from designs.base import Design
 
 
-def run_mutants(design: Design, testbench: str, out_dir: Path, workers: int = 4) -> dict:
+def run_mutants(design: Design, testbench: str, out_dir: Path, workers: int = 4, uvm: bool = False) -> dict:
     """Run the suite on the golden design and on every mutant. A mutant is caught when the
     run fails; caught_by says whether assertions, the reference model, or both noticed."""
-    golden = simulate(out_dir / "golden", design.sources(), testbench, design.dut_hier)
+    golden = simulate(out_dir / "golden", design.sources(), testbench, design.dut_hier, uvm)
     if not golden.passed:
         return {"golden_ok": False, "golden_errors": golden.compile_errors or golden.check_failures
                 or golden.assertion_failures, "results": []}
 
     def one(m):
-        r = simulate(out_dir / m.id, design.mutant_sources(m), testbench, design.dut_hier)
+        r = simulate(out_dir / m.id, design.mutant_sources(m), testbench, design.dut_hier, uvm)
         if not r.built or r.passed is None:
             verdict = "invalid"
         else:

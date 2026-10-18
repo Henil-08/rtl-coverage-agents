@@ -54,6 +54,7 @@ def _view(status: dict) -> dict:
         "session_id": status["session_id"],
         "design": status["design"],
         "mode": status["mode"],
+        "language": status["language"],
         "iteration": status["iteration"],
         "done": status["done"],
         "stop_reason": status["stop_reason"],
@@ -91,14 +92,16 @@ def describe_design(design: str) -> dict:
 def start_session(
     design: str,
     mode: str = "auto",
+    language: str = "sv",
     target_pct: float | None = None,
     toggle_target: float | None = None,
     max_iters: int | None = None,
 ) -> dict:
     """Start the agent loop. mode: auto (runs to the end), approval (pauses at every review gate),
-    manual (pauses so a person runs the generated run.sh). Returns where it stopped or paused."""
-    return _view(svc().start(design, mode, target_pct=target_pct, toggle_target=toggle_target,
-                             max_iters=max_iters))
+    manual (pauses so a person runs the generated run.sh). language: sv (plain SystemVerilog testbench)
+    or uvm (UVM testbench, slower to build). Returns where it stopped or paused."""
+    return _view(svc().start(design, mode, language=language, target_pct=target_pct,
+                             toggle_target=toggle_target, max_iters=max_iters))
 
 
 @mcp.tool()
@@ -115,12 +118,13 @@ def respond(session_id: str, action: str = "approve", feedback: str = "") -> dic
 
 
 @mcp.tool()
-def simulate(design: str, stimulus: str, assertions: str = "") -> dict:
+def simulate(design: str, stimulus: str, assertions: str = "", language: str = "sv") -> dict:
     """Run your own stimulus (a task body using the design's driver tasks) and optional assertions
-    inside the design's fixed testbench on Verilator. Returns pass/fail and coverage."""
+    inside the design's fixed testbench on Verilator. language: sv or uvm. Returns pass/fail and coverage."""
     d = get_design(design)
-    tb = d.build_testbench([{"iteration": 1, "focus": "mcp", "stimulus": stimulus}], split_assertions(assertions))
-    return _result_view(svc().simulate(design, tb))
+    tb = d.build_testbench([{"iteration": 1, "focus": "mcp", "stimulus": stimulus}], split_assertions(assertions),
+                           language)
+    return _result_view(svc().simulate(design, tb, language=language))
 
 
 @mcp.tool()
