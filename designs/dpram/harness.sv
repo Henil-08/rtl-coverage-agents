@@ -104,11 +104,11 @@ module tb;
     cycles++;
     if (known_a && rdata_a !== exp_a) begin
       errors++;
-      $display("CHECK_FAIL cycle=%0d port=A op=%s addr=%0d got=%02h exp=%02h", cycles, oa.name(), aa, rdata_a, exp_a);
+      $display("CHECK_FAIL t=%0t cycle=%0d port=A op=%s addr=%0d got=%02h exp=%02h", $time, cycles, oa.name(), aa, rdata_a, exp_a);
     end
     if (known_b && rdata_b !== exp_b) begin
       errors++;
-      $display("CHECK_FAIL cycle=%0d port=B op=%s addr=%0d got=%02h exp=%02h", cycles, ob.name(), ab, rdata_b, exp_b);
+      $display("CHECK_FAIL t=%0t cycle=%0d port=B op=%s addr=%0d got=%02h exp=%02h", $time, cycles, ob.name(), ab, rdata_b, exp_b);
     end
   endtask
 
@@ -123,6 +123,8 @@ module tb;
   // @STIMULUS_TASKS
 
   initial begin
+    $dumpfile("wave.vcd");
+    $dumpvars(0, tb);
     // @STIMULUS_CALLS
     idle();
     $display("CYCLES %0d", cycles);

@@ -147,4 +147,6 @@ DESIGN = Design(
     default_assertions=ASSERTIONS,
     fallback=fallback,
     random_stimulus=random_stimulus,
+    wave_signals=("tb.a", "tb.b", "tb.cin", "tb.sum", "tb.exp_sum", "tb.cout", "tb.exp_cout",
+                  "tb.overflow", "tb.exp_ovf", "tb.dut.c"),
 )

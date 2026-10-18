@@ -27,6 +27,7 @@ def _hash(text: str) -> str:
 
 class VerificationService:
     def __init__(self, llm=None, db_path: Path = DB_PATH, runs_dir: Path = RUNS_DIR):
+        self.llm_model = getattr(llm, "model_name", None) or ("" if llm is None else type(llm).__name__)
         self.runs_dir = Path(runs_dir)
         self.saver = sqlite_checkpointer(db_path)
         self.graph = build_graph(llm, self.saver, self.runs_dir)
@@ -64,7 +65,8 @@ class VerificationService:
         init = dict(DEFAULTS)
         init.update({k: v for k, v in settings.items() if k in DEFAULTS and v is not None})
         init.update(design=design, mode=mode, run_root=str(self.runs_dir / thread_id),
-                    iteration=0, blocks=[], assertions=[], history=[], events=[])
+                    iteration=0, blocks=[], assertions=[], history=[], events=[], runs=[], covered=[],
+                    llm_model=self.llm_model or "none (deterministic fallbacks)")
         return self._drive(init, thread_id, on_event)
 
     def respond(self, thread_id: str, action: str = "approve", feedback: str = "",
@@ -98,6 +100,8 @@ class VerificationService:
             "analysis": v.get("analysis", ""),
             "history": v.get("history", []),
             "events": v.get("events", []),
+            "runs": v.get("runs", []),
+            "llm_model": v.get("llm_model", ""),
             "pending": interrupts[0].value if interrupts else None,
             "settings": {k: v.get(k, d) for k, d in DEFAULTS.items()},
         }

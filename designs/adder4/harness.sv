@@ -7,6 +7,8 @@ module tb;
   logic       clk = 1'b0;
   int         errors = 0;
   int         vectors = 0;
+  logic [3:0] exp_sum;
+  logic       exp_cout, exp_ovf;
 
   adder4 dut (.a(a), .b(b), .cin(cin), .sum(sum), .cout(cout), .overflow(overflow));
 
@@ -61,11 +63,13 @@ module tb;
     #1;
     exp_full = ia + ib + ic;
     exp_ovf  = (ia[3] == ib[3]) && (exp_full[3] != ia[3]);
+    exp_sum  = exp_full[3:0];
+    exp_cout = exp_full[4];
     vectors++;
     if ({cout, sum} !== exp_full || overflow !== exp_ovf) begin
       errors++;
-      $display("CHECK_FAIL a=%0d b=%0d cin=%0d got sum=%0d cout=%0b ovf=%0b exp sum=%0d cout=%0b ovf=%0b",
-               ia, ib, ic, sum, cout, overflow, exp_full[3:0], exp_full[4], exp_ovf);
+      $display("CHECK_FAIL t=%0t a=%0d b=%0d cin=%0d got sum=%0d cout=%0b ovf=%0b exp sum=%0d cout=%0b ovf=%0b",
+               $time, ia, ib, ic, sum, cout, overflow, exp_full[3:0], exp_full[4], exp_ovf);
     end
     cg.sample();
   endtask
@@ -75,6 +79,8 @@ module tb;
   // @STIMULUS_TASKS
 
   initial begin
+    $dumpfile("wave.vcd");
+    $dumpvars(0, tb);
     a = '0; b = '0; cin = 1'b0;
     // @STIMULUS_CALLS
     @(negedge clk);

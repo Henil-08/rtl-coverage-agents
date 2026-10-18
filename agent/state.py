@@ -38,6 +38,9 @@ class VerifState(TypedDict, total=False):
     done: bool
     stop_reason: str
 
+    covered: list[str]
+    llm_model: str
+    runs: Annotated[list[dict], operator.add]
     history: Annotated[list[dict], operator.add]
     events: Annotated[list[dict], operator.add]
 

@@ -7,13 +7,14 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-VERILATOR_FLAGS = "--binary --timing --coverage --assert -Wno-fatal -Wno-lint -Wno-style -j 0"
+VERILATOR_FLAGS = "--binary --timing --coverage --assert --trace -Wno-fatal -Wno-lint -Wno-style -j 0"
 
 RUN_SH = """\
 #!/usr/bin/env bash
 set -eo pipefail
 cd "$(dirname "$0")"
-rm -rf obj_dir coverage.dat
+command -v ccache >/dev/null && export OBJCACHE=ccache
+rm -rf obj_dir coverage.dat wave.vcd
 verilator {flags} --top-module {top} --Mdir obj_dir {sources} testbench.sv -o simv 2>&1 | tee build.log
 ./obj_dir/simv +verilator+error+limit+100000 2>&1 | tee sim.log
 """
@@ -23,6 +24,8 @@ _CHECK_FAIL = re.compile(r"CHECK_FAIL.*")
 _BUILD_ERR = re.compile(r"^%Error.*", re.M)
 _CODE_KINDS = ("line", "branch", "toggle", "expr")
 _STIMULUS_COUNT = re.compile(r"^(?:VECTORS|CYCLES)\s+(\d+)", re.M)
+_ASSERT_AT = re.compile(r"^\[(\d+)\].*Assertion failed in \w+\.(\w+)", re.M)
+_CHECK_AT = re.compile(r"^CHECK_FAIL t=(\d+)\s+(.*)$", re.M)
 
 
 @dataclass
@@ -36,6 +39,8 @@ class SimResult:
     point_pct: dict[str, float] = field(default_factory=dict)
     functional_pct: float | None = None
     stimulus_count: int | None = None
+    failures: list[dict] = field(default_factory=list)
+    wave: str = ""
     code: dict[str, dict] = field(default_factory=dict)
     log: str = ""
     run_dir: str = ""
@@ -97,6 +102,14 @@ def collect(run_dir: Path, dut_hier: str = "tb.dut") -> SimResult:
     res.log = log
     res.check_failures = _CHECK_FAIL.findall(log)
     res.assertion_failures = sorted({a or b for a, b in _ASSERT_FAIL.findall(log)})
+    res.failures = sorted(
+        [{"kind": "assertion", "time": int(t), "label": label, "text": f"assertion {label} failed"}
+         for t, label in _ASSERT_AT.findall(log)]
+        + [{"kind": "check", "time": int(t), "label": "reference model", "text": text.strip()}
+           for t, text in _CHECK_AT.findall(log)],
+        key=lambda f: f["time"])[:200]
+    if (run_dir / "wave.vcd").exists():
+        res.wave = str(run_dir / "wave.vcd")
     counts = _STIMULUS_COUNT.findall(log)
     res.stimulus_count = int(counts[-1]) if counts else None
     if "TEST FAILED" in log or res.assertion_failures or res.check_failures:

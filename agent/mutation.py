@@ -30,6 +30,8 @@ def run_mutants(design: Design, testbench: str, out_dir: Path, workers: int = 4)
             "by_scoreboard": bool(r.check_failures),
             "assertions": r.assertion_failures,
             "first_check": r.check_failures[0] if r.check_failures else "",
+            "failures": r.failures[:20],
+            "wave": r.wave,
         }
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

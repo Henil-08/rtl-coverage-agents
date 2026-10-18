@@ -68,7 +68,8 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     def _event(state: VerifState, agent: str, kind: str, summary: str) -> dict:
         if kind == "fallback" and last_error["msg"]:
             summary += f" (LLM error, used fallback: {last_error['msg']})"
-        return {"agent": agent, "kind": kind, "summary": summary, "iteration": state.get("iteration", 0)}
+        return {"agent": agent, "kind": kind, "summary": summary, "iteration": state.get("iteration", 0),
+                "t": round(time.time(), 2)}
 
     def planner(state: VerifState) -> dict:
         d = get_design(state["design"])
@@ -227,7 +228,21 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         else:
             summary = (f"{'PASS' if res.passed else 'FAIL'}, functional {res.functional_pct}%, "
                        f"{_code_summary(result)}")
-        return {"run_dir": str(run_dir), "result": result, "sim_runs": state.get("sim_runs", 0) + 1,
+        record = {
+            "n": state.get("sim_runs", 0) + 1,
+            "iteration": state["iteration"],
+            "run_dir": str(run_dir),
+            "by": kind,
+            "built": res.built,
+            "passed": res.passed,
+            "functional_pct": res.functional_pct,
+            "compile_errors": res.compile_errors[:5],
+            "failures": res.failures[:50],
+            "wave": res.wave,
+            "seconds": res.seconds,
+            "assertions": [a["label"] for a in state.get("assertions", []) if a["status"] == "active"],
+        }
+        return {"run_dir": str(run_dir), "result": result, "sim_runs": record["n"], "runs": [record],
                 "events": [_event(state, "simulator", kind, summary)]}
 
     def triage(state: VerifState) -> dict:
@@ -288,7 +303,11 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             **{f"{k}_pct": v.get("pct") for k, v in (res.get("code") or {}).items()},
             "passed": res.get("passed"),
             "assertions_active": sum(a["status"] == "active" for a in state.get("assertions", [])),
+            "run_dir": state.get("run_dir", ""),
         }
+        covered_before = set(state.get("covered", []))
+        hit_now = {k for k, v in res.get("bins", {}).items() if v > 0}
+        record["newly_covered"] = sorted(hit_now - covered_before)
         toggle = record.get("toggle_pct") or 0.0
         history = [h["functional_pct"] for h in state.get("history", [])] + [pct]
         toggles = [h.get("toggle_pct") or 0.0 for h in state.get("history", [])] + [toggle]
@@ -324,6 +343,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             if text:
                 guidance, kind = text.strip(), "llm"
         return {
+            "covered": sorted(hit_now | covered_before),
             "done": done,
             "stop_reason": reason,
             "next_focus": guidance,

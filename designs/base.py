@@ -41,6 +41,8 @@ class Design:
     fallback: Callable[..., tuple[str, str]]
     random_stimulus: Callable[[random.Random, int], str]
     dut_hier: str = "tb.dut"
+    clock: str = "tb.clk"
+    wave_signals: tuple[str, ...] = ()
     extra: dict = field(default_factory=dict)
 
     def sources(self) -> dict[str, str]:
