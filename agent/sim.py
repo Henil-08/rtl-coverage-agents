@@ -9,22 +9,25 @@ from pathlib import Path
 
 VERILATOR_FLAGS = "--binary --timing --coverage --assert --trace -Wno-fatal -Wno-lint -Wno-style -j 0"
 
+UVM_SRC = Path(__file__).resolve().parent.parent / "third_party" / "uvm" / "src"
+UVM_FLAGS = f"+define+UVM_NO_DPI +incdir+{UVM_SRC} {UVM_SRC}/uvm_pkg.sv"
+
 RUN_SH = """\
 #!/usr/bin/env bash
 set -eo pipefail
 cd "$(dirname "$0")"
 command -v ccache >/dev/null && export OBJCACHE=ccache
 rm -rf obj_dir coverage.dat wave.vcd
-verilator {flags} --top-module {top} --Mdir obj_dir {sources} testbench.sv -o simv 2>&1 | tee build.log
+verilator {flags} --top-module {top} --Mdir obj_dir {extra}{sources} testbench.sv -MAKEFLAGS "OPT_FAST=-O0 OPT_SLOW=-O0 OPT_GLOBAL=-O0" -o simv 2>&1 | tee build.log
 ./obj_dir/simv +verilator+error+limit+100000 2>&1 | tee sim.log
 """
 
-_ASSERT_FAIL = re.compile(r"ASSERT_FAIL\s+(\w+)|Assertion failed in \w+\.(\w+)")
+_ASSERT_FAIL = re.compile(r"ASSERT_FAIL\s+(\w+)|Assertion failed in (?:\w+\.)+(\w+)")
 _CHECK_FAIL = re.compile(r"CHECK_FAIL.*")
 _BUILD_ERR = re.compile(r"^%Error.*", re.M)
 _CODE_KINDS = ("line", "branch", "toggle", "expr")
 _STIMULUS_COUNT = re.compile(r"^(?:VECTORS|CYCLES)\s+(\d+)", re.M)
-_ASSERT_AT = re.compile(r"^\[(\d+)\].*Assertion failed in \w+\.(\w+)", re.M)
+_ASSERT_AT = re.compile(r"^\[(\d+)\].*Assertion failed in (?:\w+\.)+(\w+)", re.M)
 _CHECK_AT = re.compile(r"^CHECK_FAIL t=(\d+)\s+(.*)$", re.M)
 
 
@@ -54,19 +57,22 @@ def verilator_available() -> bool:
     return shutil.which("verilator") is not None
 
 
-def prepare(run_dir: Path, sources: dict[str, str], testbench: str, top: str = "tb") -> Path:
+def prepare(run_dir: Path, sources: dict[str, str], testbench: str, top: str = "tb", uvm: bool = False) -> Path:
     """Write sources, testbench.sv and run.sh into run_dir. Returns the script path."""
     run_dir.mkdir(parents=True, exist_ok=True)
     for name, text in sources.items():
         (run_dir / name).write_text(text)
     (run_dir / "testbench.sv").write_text(testbench)
     script = run_dir / "run.sh"
-    script.write_text(RUN_SH.format(flags=VERILATOR_FLAGS, top=top, sources=" ".join(sources)))
+    if uvm and not (UVM_SRC / "uvm_pkg.sv").exists():
+        raise FileNotFoundError("UVM library missing: run `git submodule update --init`")
+    script.write_text(RUN_SH.format(flags=VERILATOR_FLAGS, top=top, sources=" ".join(sources),
+                                    extra=UVM_FLAGS + " " if uvm else ""))
     script.chmod(0o755)
     return script
 
 
-def run(run_dir: Path, dut_hier: str = "tb.dut", timeout: int = 120) -> SimResult:
+def run(run_dir: Path, dut_hier: str = "tb.dut", timeout: int = 600) -> SimResult:
     start = time.monotonic()
     try:
         proc = subprocess.run(
@@ -82,8 +88,9 @@ def run(run_dir: Path, dut_hier: str = "tb.dut", timeout: int = 120) -> SimResul
     return result
 
 
-def simulate(run_dir: Path, sources: dict[str, str], testbench: str, dut_hier: str = "tb.dut") -> SimResult:
-    prepare(run_dir, sources, testbench)
+def simulate(run_dir: Path, sources: dict[str, str], testbench: str, dut_hier: str = "tb.dut",
+             uvm: bool = False) -> SimResult:
+    prepare(run_dir, sources, testbench, uvm=uvm)
     return run(run_dir, dut_hier)
 
 
