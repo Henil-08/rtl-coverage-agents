@@ -16,6 +16,7 @@ from agent.llm import DEFAULT_MODEL, get_llm
 from agent.service import VerificationService
 from agent.state import DEFAULTS
 from designs import DESIGNS, get_design
+from rag import kb as knowledge
 
 st.set_page_config(page_title="RTL coverage agents", page_icon="◈", layout="wide")
 ui.inject_css()
@@ -67,6 +68,18 @@ with st.sidebar:
         model = st.text_input("Groq model", os.getenv("GROQ_MODEL", DEFAULT_MODEL))
         llm_on = get_llm(model) is not None
         st.caption("Connected" if llm_on else "No GROQ_API_KEY: agents use deterministic fallbacks.")
+    base = knowledge.load()
+    with st.expander("Knowledge base"):
+        if base is None:
+            st.caption("Not built yet. Run `uv run python -m rag build` to fetch the public datasheets "
+                       "listed in knowledge/sources.toml and index them.")
+        else:
+            stats = base.stats()
+            st.caption(f"{len(stats['docs'])} documents, {stats['passages']} passages, "
+                       f"{'keyword + embedding' if stats['embeddings'] else 'keyword'} search")
+            q = st.text_input("Search", placeholder="e.g. write collision priority")
+            for h in base.search(q, 4) if q else []:
+                st.markdown(f"**{h['title']}**{' p.' + str(h['page']) if h['page'] else ''}  \n{h['text'][:300]}…")
     svc = get_service(model)
     sessions = svc.list_sessions()
     if sessions:
@@ -118,6 +131,10 @@ def setup_view() -> None:
     mode = st.segmented_control("Mode", list(MODES), default="auto", format_func=lambda m: MODES[m][0]) or "auto"
     st.caption(MODES[mode][1])
 
+    use_kb = st.toggle("Planner reads the knowledge base", value=base is not None, disabled=base is None,
+                       help="The planner searches public datasheets and user guides for behaviour and risks "
+                            "related to this design and cites them in the plan.")
+
     st.space("small")
     st.markdown("**When to stop**")
     c1, c2, c3 = st.columns(3)
@@ -139,7 +156,7 @@ def setup_view() -> None:
         ss["sid"] = sid
         ss["launch"] = ("start", dict(design=design, mode=mode, language=language, thread_id=sid, target_pct=target,
                                       toggle_target=toggle, max_iters=max_iters, plateau_iters=window,
-                                      plateau_delta=delta))
+                                      plateau_delta=delta, use_kb=use_kb))
         st.rerun()
 
 
@@ -338,7 +355,17 @@ def session_view(sid: str) -> None:
                 st.html(ui.feed_html(status["events"]))
 
     with plan_tab:
+        st.markdown("**Verification plan**")
         st.dataframe(pd.DataFrame(status["plan"]), hide_index=True, width="stretch")
+        hits = status.get("kb_hits", [])
+        if hits:
+            st.markdown(f"**References the planner used** ({len(hits)} passages from the knowledge base)")
+            for h in hits:
+                page = f", p.{h['page']}" if h["page"] else ""
+                with st.expander(f"{h['ref']} · {h['title']}{page}"):
+                    st.markdown(h["text"])
+                    st.caption(f"Matched query: {h['query']}" + (f" · [source]({h['url']})" if h["url"] else ""))
+        st.markdown("**Assertions**")
         for a in status["assertions"]:
             tone = "good" if a["status"] == "active" else "bad"
             st.html(f'<div class="chips">{ui.chip(a["label"])}{ui.chip(a["status"], tone)}'
