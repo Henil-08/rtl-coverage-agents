@@ -16,6 +16,8 @@ class VerifState(TypedDict, total=False):
     plateau_delta: float
     max_iters: int
 
+    use_kb: bool
+    kb_hits: list[dict]
     plan: list[dict]
     assertions: list[dict]
     blocks: list[dict]
@@ -53,4 +55,5 @@ DEFAULTS: dict[str, Any] = {
     "plateau_iters": 2,
     "plateau_delta": 1.0,
     "max_iters": 8,
+    "use_kb": True,
 }

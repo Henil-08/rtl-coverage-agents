@@ -6,11 +6,12 @@ PLANNER_USER = """SPEC
 
 COVERAGE MODEL (fixed covergroup in the testbench)
 {covergroup}
-
+{references}
 Write a verification plan as a JSON list. One entry per feature to verify:
   {{"feature": "<behaviour from the spec>", "coverpoints": ["<covergroup coverpoints that measure it, or 'toggle'>"],
-    "risk": "<what bug would hide here>"}}
+    "risk": "<what bug would hide here>", "sources": ["<reference ids such as S2 that informed it, if any>"]}}
 List 5 to 9 features. Include corner cases the spec calls out, even ones no coverpoint measures (use [] then).
+The spec always wins over the reference material; use the references to find risks the spec does not spell out.
 Output only the JSON list."""
 
 ASSERTION_SYSTEM = """You write SystemVerilog Assertions (SVA) from a spec. You have NOT seen the tests, on purpose:

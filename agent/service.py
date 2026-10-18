@@ -93,6 +93,7 @@ class VerificationService:
             "done": bool(v.get("done")),
             "stop_reason": v.get("stop_reason", ""),
             "plan": v.get("plan", []),
+            "kb_hits": v.get("kb_hits", []),
             "assertions": v.get("assertions", []),
             "blocks": v.get("blocks", []),
             "testbench": v.get("testbench", ""),

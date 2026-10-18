@@ -61,6 +61,17 @@ def markdown(status: dict, design, mutation: dict | None) -> str:
     out += [f"| `{cp}` | {_pct(p)} |" for cp, p in sorted(res.get("point_pct", {}).items())]
     out.append("")
 
+    hits = status.get("kb_hits", [])
+    out += ["## Verification plan", "", "| Feature | Coverpoints | Risk | Sources |", "|---|---|---|---|"]
+    out += [f"| {p.get('feature', '')} | {', '.join(p.get('coverpoints', []))} | {p.get('risk', '')} | "
+            f"{', '.join(p.get('sources', []))} |" for p in status.get("plan", [])]
+    out.append("")
+    if hits:
+        out += ["References retrieved from the knowledge base:", ""]
+        out += [f"- **{h['ref']}** {h['title']}{', p.' + str(h['page']) if h['page'] else ''} — "
+                f"{h['text'][:220]}…" for h in hits]
+        out.append("")
+
     out += ["## Iterations", ""]
     blocks = {b["iteration"]: b for b in status["blocks"]}
     runs_by_it: dict[int, list[dict]] = {}

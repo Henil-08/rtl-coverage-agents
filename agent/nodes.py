@@ -47,6 +47,53 @@ def _missed(result: dict | None, limit: int = 15) -> list[str]:
     return out[:limit]
 
 
+def retrieve(design, per_query: int = 2, limit: int = 8) -> list[dict]:
+    """Search the knowledge base with the design title and each behaviour and corner case in its spec."""
+    from rag.kb import load
+
+    base = load()
+    if base is None:
+        return []
+    bullets = re.findall(r"^\s*-\s+(.+)$", design.spec(), re.M)
+    queries = [design.title] + [re.sub(r"[`*]", "", b) for b in bullets][:10]
+    seen, hits = set(), []
+    for q in queries:
+        for h in base.search(q, per_query):
+            key = (h["doc"], h["page"], h["text"][:60])
+            if key not in seen:
+                seen.add(key)
+                hits.append(h)
+    hits = sorted(hits, key=lambda h: -h["score"])[:limit]
+    for i, h in enumerate(hits, 1):
+        h["ref"] = f"S{i}"
+    return hits
+
+
+def cite(plan: list[dict], hits: list[dict]) -> list[dict]:
+    """Give every plan feature without a citation the best matching passage."""
+    from rag.kb import load
+
+    base = load()
+    if base is None:
+        return hits
+    known = {(h["doc"], h["page"], h["text"][:60]): h["ref"] for h in hits}
+    for p in plan:
+        valid = [r for r in p.get("sources", []) if r in known.values()]
+        if valid:
+            p["sources"] = valid
+            continue
+        top = base.search(p["feature"], 1)
+        if not top:
+            continue
+        key = (top[0]["doc"], top[0]["page"], top[0]["text"][:60])
+        if key not in known:
+            top[0]["ref"] = f"S{len(hits) + 1}"
+            hits.append(top[0])
+            known[key] = top[0]["ref"]
+        p["sources"] = [known[key]]
+    return hits
+
+
 def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     runs_dir = runs_dir or Path("runs")
     last_error = {"msg": ""}
@@ -76,7 +123,13 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     def planner(state: VerifState) -> dict:
         d = get_design(state["design"])
         feedback = state.get("feedback", "")
-        user = prompts.PLANNER_USER.format(spec=d.spec(), covergroup=d.covergroup())
+        hits = retrieve(d) if _cfg(state, "use_kb") else []
+        refs = ""
+        if hits:
+            refs = "\nREFERENCE MATERIAL (excerpts from public datasheets and user guides)\n" + "\n".join(
+                f"[{h['ref']}] {h['title']}{' p.' + str(h['page']) if h['page'] else ''}: {h['text'][:700]}"
+                for h in hits) + "\n"
+        user = prompts.PLANNER_USER.format(spec=d.spec(), covergroup=d.covergroup(), references=refs)
         if feedback:
             user += f"\nReviewer feedback on your last plan: {feedback}"
         text = ask(prompts.PLANNER_SYSTEM, user)
@@ -88,11 +141,19 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             except json.JSONDecodeError:
                 plan = None
         kind = "llm" if plan else "fallback"
-        plan = plan or d.default_plan
+        plan = [dict(p) for p in (plan or d.default_plan)]
+        if _cfg(state, "use_kb"):
+            hits = cite(plan, hits)
+        summary = f"{len(plan)} features in the verification plan"
+        if hits:
+            summary += f", {len(hits)} knowledge-base passages from {len({h['doc'] for h in hits})} documents"
+        elif _cfg(state, "use_kb"):
+            summary += " (knowledge base not built: uv run python -m rag build)"
         return {
             "plan": plan,
+            "kb_hits": hits,
             "feedback": "",
-            "events": [_event(state, "planner", kind, f"{len(plan)} features in the verification plan")],
+            "events": [_event(state, "planner", kind, summary)],
         }
 
     def assertion_writer(state: VerifState) -> dict:
