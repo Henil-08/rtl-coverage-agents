@@ -8,3 +8,6 @@ __pycache__/
 *.db
 data/
 runs/
+knowledge/docs/
+knowledge/index/
+knowledge/.models/

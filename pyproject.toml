@@ -12,6 +12,9 @@ dependencies = [
     "langchain-groq>=1.0",
     "mcp>=2.0",
     "python-dotenv>=1.0",
+    "pypdf>=6.21.1",
+    "rank-bm25>=0.2.2",
+    "fastembed>=0.9.0",
 ]
 
 [dependency-groups]

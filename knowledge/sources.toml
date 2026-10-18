@@ -1,0 +1,68 @@
+# Public documents the planner can search. `uv run python -m rag build` downloads them into
+# knowledge/docs/ (not committed: each stays under its publisher's licence) and indexes them.
+# Add a [[doc]] entry to grow the corpus, or drop PDF/HTML/Markdown files into knowledge/docs/ yourself.
+
+[[doc]]
+id = "microchip_ac374"
+title = "Microchip AC374: Simultaneous Read-Write Operations in Dual-Port SRAM"
+url = "https://ww1.microchip.com/downloads/aemDocuments/documents/FPGA/ProductDocuments/ProductBrief/AC374_Read-Write+Operations+in+Dual-Port+SRAM+for+Flash-Based+cSoCs+and+FPGAs.pdf"
+
+[[doc]]
+id = "xilinx_blk_mem_gen"
+title = "Xilinx Block Memory Generator v1.1 data sheet (DS512), copy hosted by MIT"
+url = "https://web.mit.edu/neboat/Public/6.111_final_project/code/blk_mem_gen_ds512.pdf"
+
+[[doc]]
+id = "dcae_blockram"
+title = "FPGA Block RAM lecture notes (UPB DCAE)"
+url = "https://wiki.dcae.pub.ro/images/2/27/FPGA_BlockRAM.pdf"
+
+[[doc]]
+id = "accellera_uvm_ug"
+title = "Accellera UVM 1.2 User's Guide"
+url = "https://www.accellera.org/images/downloads/standards/uvm/uvm_users_guide_1.2.pdf"
+
+[[doc]]
+id = "verilator_simulating"
+title = "Verilator manual: Simulating (coverage, tracing, assertions)"
+url = "https://verilator.org/guide/latest/simulating.html"
+
+[[doc]]
+id = "verilator_coverage"
+title = "Verilator manual: verilator_coverage"
+url = "https://verilator.org/guide/latest/exe_verilator_coverage.html"
+
+[[doc]]
+id = "verilator_languages"
+title = "Verilator manual: language support"
+url = "https://verilator.org/guide/latest/languages.html"
+
+[[doc]]
+id = "opentitan_prim"
+title = "OpenTitan primitives (prim) README"
+url = "https://raw.githubusercontent.com/lowRISC/opentitan/master/hw/ip/prim/README.md"
+
+[[doc]]
+id = "wiki_dual_ported_ram"
+title = "Wikipedia: Dual-ported RAM"
+url = "https://en.wikipedia.org/wiki/Dual-ported_RAM"
+
+[[doc]]
+id = "wiki_sram"
+title = "Wikipedia: Static random-access memory"
+url = "https://en.wikipedia.org/wiki/Static_random-access_memory"
+
+[[doc]]
+id = "wiki_functional_verification"
+title = "Wikipedia: Functional verification"
+url = "https://en.wikipedia.org/wiki/Functional_verification"
+
+[[doc]]
+id = "wiki_mutation_testing"
+title = "Wikipedia: Mutation testing"
+url = "https://en.wikipedia.org/wiki/Mutation_testing"
+
+[[doc]]
+id = "wiki_systemverilog"
+title = "Wikipedia: SystemVerilog"
+url = "https://en.wikipedia.org/wiki/SystemVerilog"
