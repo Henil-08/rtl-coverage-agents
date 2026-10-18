@@ -16,7 +16,6 @@ RUN_SH = """\
 #!/usr/bin/env bash
 set -eo pipefail
 cd "$(dirname "$0")"
-command -v ccache >/dev/null && export OBJCACHE=ccache
 rm -rf obj_dir coverage.dat wave.vcd
 verilator {flags} --top-module {top} --Mdir obj_dir {extra}{sources} testbench.sv -MAKEFLAGS "OPT_FAST=-O0 OPT_SLOW=-O0 OPT_GLOBAL=-O0" -o simv 2>&1 | tee build.log
 ./obj_dir/simv +verilator+error+limit+100000 2>&1 | tee sim.log
