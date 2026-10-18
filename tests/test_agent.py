@@ -125,3 +125,23 @@ def test_mutation_scores(make_svc):
     assert rep["golden_ok"] and rep["survived"] == ["M10"]
     assert svc.mutation_report(dp["session_id"])["stale"] is False
     assert svc.summary(dp["session_id"])["mutation"]["caught"] == 9
+
+
+def test_report_and_bundle_cover_the_whole_session(make_svc):
+    import io
+    import zipfile
+
+    from agent import report
+
+    svc = make_svc()
+    st = svc.start("dpram", "auto", thread_id="rep")
+    mut = svc.run_mutation("rep")
+    d = get_design("dpram")
+    md = report.markdown(svc.status("rep"), d, svc.mutation_report("rep"))
+    for section in ("## Summary", "## Final coverage", "## Iterations", "## Assertions", "## Mutation testing"):
+        assert section in md
+    assert f"Caught {mut['caught']}/10" in md
+    assert all(r["wave"] for r in st["runs"])
+    names = zipfile.ZipFile(io.BytesIO(report.bundle(svc.status("rep"), d, mut, svc.suite("rep")))).namelist()
+    assert "report.md" in names and "testbench.sv" in names
+    assert any(n.startswith("waves/run_") for n in names) and any(n.startswith("waves/mutant_") for n in names)
