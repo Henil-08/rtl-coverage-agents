@@ -9,6 +9,7 @@ from typing import Any
 from langgraph.types import interrupt
 
 from agent import events, prompts
+from agent.llm import get_llm, model_name, request_budget
 from agent.sim import collect, prepare, run
 from agent.tbgen import architect, design_for
 from agent.state import DEFAULTS, VerifState
@@ -16,6 +17,12 @@ from designs import get_design
 from designs.base import dedupe_labels, split_assertions, strip_fences, valid_stimulus
 
 MAX_COMPILE_RETRIES = 2
+MAX_OUT = {"planner": 1600, "testbench_architect": 4200, "assertion_writer": 1200, "stimulus_writer": 1800,
+           "coverage_analyst": 600, "triage": 400}
+
+
+def estimate_tokens(text: str) -> int:
+    return len(text) // 3 + 1
 UVM_NOTE = ("\nThis session uses a UVM testbench: your stimulus becomes the body() of a uvm_sequence that "
             "extends base_seq, which provides exactly these tasks. Do not declare classes or use uvm_do macros.")
 MAX_REPAIRS = 1
@@ -117,17 +124,36 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     runs_dir = runs_dir or Path("runs")
     last_error = {"msg": ""}
 
-    def ask(system: str, user: str, agent: str = "") -> str | None:
+    def llm_for(agent: str, state: dict | None):
+        """The session's model for this agent: its override, else the session default, else the service's."""
+        ref = ((state or {}).get("agent_models") or {}).get(agent) or (state or {}).get("model")
+        if ref:
+            return get_llm(ref), ref
+        return llm, model_name(llm) if llm is not None else None
+
+    def ask(system: str, user: str, agent: str = "", state: dict | None = None) -> str | None:
         last_error["msg"] = ""
-        if llm is None:
+        model, ref = llm_for(agent, state)
+        if model is None:
+            if ref:
+                last_error["msg"] = f"model {ref} is not configured"
             return None
-        for attempt in range(3):
+        client = model
+        budget = request_budget(ref)
+        if budget:
+            room = budget - estimate_tokens(system + user) - 150
+            if room < 400:
+                last_error["msg"] = f"prompt too large for the provider's {budget}-token request limit"
+                return None
+            if hasattr(model, "bind"):
+                client = model.bind(max_tokens=min(MAX_OUT.get(agent, 1500), room))
+        for attempt in range(4):
             try:
                 msgs = [("system", system), ("user", user)]
-                if events.active() and hasattr(llm, "stream"):
+                if events.active() and hasattr(client, "stream"):
                     buf, parts = events.TokenBuffer(agent), []
                     events.emit("llm_start", agent=agent)
-                    for chunk in llm.stream(msgs):
+                    for chunk in client.stream(msgs):
                         text = getattr(chunk, "content", "") or ""
                         if text:
                             parts.append(text)
@@ -135,14 +161,16 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                     buf.flush()
                     events.emit("llm_end", agent=agent)
                     return "".join(parts)
-                resp = llm.invoke(msgs)
+                resp = client.invoke(msgs)
                 return getattr(resp, "content", str(resp))
             except Exception as e:
                 last_error["msg"] = f"{type(e).__name__}: {str(e)[:160]}"
-                if "RateLimit" not in type(e).__name__ or attempt == 2:
+                if "RateLimit" not in type(e).__name__ and "429" not in str(e) or attempt == 3:
                     return None
                 m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", str(e))
-                time.sleep(min(30.0, (int(m.group(1) or 0) * 60 + float(m.group(2))) if m else 10.0) + 0.5)
+                wait = (int(m.group(1) or 0) * 60 + float(m.group(2))) if m else 20.0
+                events.emit("llm_wait", agent=agent, seconds=round(wait, 1))
+                time.sleep(min(90.0, wait) + 1.0)
         return None
 
     def _event(state: VerifState, agent: str, kind: str, summary: str) -> dict:
@@ -165,7 +193,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         user = prompts.PLANNER_USER.format(spec=d.spec(), covergroup=covergroup, references=refs)
         if feedback:
             user += f"\nReviewer feedback on your last plan: {feedback}"
-        text = ask(prompts.PLANNER_SYSTEM, user, "planner")
+        text = ask(prompts.PLANNER_SYSTEM, user, "planner", state)
         plan = None
         if text:
             m = re.search(r"\[.*\]", text, re.S)
@@ -192,15 +220,19 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     def testbench_architect(state: VerifState) -> dict:
         d = get_design(state["design"])
         lang = state.get("language", "sv")
-        if llm is None:
+        if llm_for("testbench_architect", state)[0] is None:
             if d.has_handwritten_tb():
                 return {"tb_source": "handwritten", "events": [_event(state, "testbench_architect", "fallback",
                         "no LLM available, using the hand-written testbench")]}
             return {"done": True, "issue": "tb_failed", "stop_reason": "writing a testbench for an uploaded "
                     "design needs an LLM (set GROQ_API_KEY)",
                     "events": [_event(state, "testbench_architect", "rule", "no LLM, cannot write a testbench")]}
-        gen = architect(d, state.get("plan", []), lang, ask, Path(state.get("run_root", str(runs_dir))) /
-                        f"testbench_{len(state.get('events', []))}", state.get("feedback", ""))
+        gen = architect(d, state.get("plan", []), lang, lambda sy, us, ag: ask(sy, us, ag, state),
+                        Path(state.get("run_root", str(runs_dir))) /
+                        f"testbench_{len(state.get('events', []))}", state.get("feedback", ""),
+                        compact=request_budget(llm_for("testbench_architect", state)[1]) is not None)
+        if not gen["ok"] and last_error["msg"]:
+            gen["reason"] += f" (LLM error: {last_error['msg']})"
         passed = sum(g["ok"] for g in gen["gates"])
         if not gen["ok"]:
             if gen.get("design_bug"):
@@ -238,7 +270,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 if a.get("repairs", 0) < MAX_REPAIRS:
                     text = ask(prompts.ASSERTION_SYSTEM, prompts.ASSERTION_REPAIR_USER.format(
                         spec=d.spec(), signals=d.signals, code=a["code"], problem=problem, label=a["label"]),
-                        "assertion_writer")
+                        "assertion_writer", state)
                     if text and "DROP" not in text:
                         fixed = next(iter(split_assertions(_tag(text, "assertion") or text)), None)
                 if fixed:
@@ -254,7 +286,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 spec=d.spec(), signals=d.signals, plan=json.dumps(state.get("plan", []), indent=1), count="4 to 8")
             if feedback:
                 user += f"\nReviewer feedback on your last set: {feedback}"
-            text = ask(prompts.ASSERTION_SYSTEM, user, "assertion_writer")
+            text = ask(prompts.ASSERTION_SYSTEM, user, "assertion_writer", state)
             new = split_assertions(_tag(text, "assertions") or text) if text else []
             kind = "llm" if new else "fallback"
             new = new or split_assertions(d.default_assertions)
@@ -299,7 +331,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 missed="\n".join(f"- {m}" for m in _missed(result)) or "- none yet",
                 guidance=state.get("next_focus") or "start broad: every operation and the corner cases in the spec",
                 feedback=feedback,
-            ), "stimulus_writer")
+            ), "stimulus_writer", state)
             if text:
                 stim = _tag(text, "stimulus")
                 if valid_stimulus(stim, d.drivers):
@@ -408,7 +440,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         if checks:
             note = ask(prompts.TRIAGE_SYSTEM, prompts.TRIAGE_USER.format(
                 spec=d.spec(), checks=checks[:10], asserts=fired,
-                codes=[a["code"] for a in assertions if a["label"] in fired]), "triage") or ""
+                codes=[a["code"] for a in assertions if a["label"] in fired]), "triage", state) or ""
             return {"issue": "design_mismatch", "issue_detail": "", "triage_note": note,
                     "events": [_event(state, "triage", "llm" if note else "rule",
                                       f"reference model mismatch ({len(checks)}): possible design bug")]}
@@ -465,7 +497,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             text = ask(prompts.ANALYST_SYSTEM, prompts.ANALYST_USER.format(
                 plan=compact_plan(state.get("plan", [])), iteration=it, focus=record["focus"],
                 history=history, points=res.get("point_pct", {}), uncovered=uncovered or "none",
-                code=_code_summary(res), missed=_missed(res)), "coverage_analyst")
+                code=_code_summary(res), missed=_missed(res)), "coverage_analyst", state)
             if text:
                 guidance, kind = text.strip(), "llm"
         return {

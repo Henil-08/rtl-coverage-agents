@@ -17,6 +17,8 @@ class VerifState(TypedDict, total=False):
     max_iters: int
 
     use_kb: bool
+    model: str
+    agent_models: dict
     tb_source: str
     gen_tb: dict
     kb_hits: list[dict]

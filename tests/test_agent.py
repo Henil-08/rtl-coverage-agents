@@ -236,3 +236,29 @@ def test_generated_uvm_testbench(make_svc):
     assert gates["uvm_compile"] and gates["uvm_golden_run"] and gates["uvm_matches_sv"]
     assert st["language"] == "uvm" and "class seq_it1 extends base_seq" in st["testbench"]
     assert st["result"]["built"]
+
+
+def test_per_agent_model_overrides(make_svc, monkeypatch):
+    import agent.nodes as nodes
+
+    calls = []
+
+    class Named(FakeLLM):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
+        def invoke(self, msgs):
+            calls.append((self.name, msgs[0][1]))
+            return super().invoke(msgs)
+
+    small, big = Named("small"), Named("big")
+    monkeypatch.setattr(nodes, "get_llm", lambda ref: {"ollama:small": small, "anthropic:big": big}.get(ref))
+    st = make_svc(FakeLLM()).start("adder4", "auto", thread_id="route", max_iters=1, model="ollama:small",
+                                   agent_models={"planner": "anthropic:big"})
+    who = {n for n, system in calls if "verification lead. You turn" in system}
+    assert who == {"big"}
+    assert any(n == "small" for n, _ in calls)
+    assert st["model"] == "ollama:small" and st["agent_models"] == {"planner": "anthropic:big"}
+    with pytest.raises(ValueError):
+        make_svc().start("adder4", "auto", model="nonsense")

@@ -13,6 +13,7 @@ from typing import Any, Callable
 from langgraph.types import Command
 
 from agent import events
+from agent.llm import model_name, split
 from agent.graph import DB_PATH, RUNS_DIR, build_graph, sqlite_checkpointer
 from agent.mutation import run_mutants
 from agent.sim import simulate
@@ -29,7 +30,7 @@ def _hash(text: str) -> str:
 
 class VerificationService:
     def __init__(self, llm=None, db_path: Path = DB_PATH, runs_dir: Path = RUNS_DIR):
-        self.llm_model = getattr(llm, "model_name", None) or ("" if llm is None else type(llm).__name__)
+        self.llm_model = "" if llm is None else model_name(llm)
         self.runs_dir = Path(runs_dir)
         self.saver = sqlite_checkpointer(db_path)
         self.graph = build_graph(llm, self.saver, self.runs_dir)
@@ -64,7 +65,11 @@ class VerificationService:
         return status
 
     def start(self, design: str, mode: str = "auto", thread_id: str | None = None,
-              on_event: Callable[[dict], None] | None = None, language: str = "sv", **settings: Any) -> dict:
+              on_event: Callable[[dict], None] | None = None, language: str = "sv", model: str | None = None,
+              agent_models: dict[str, str] | None = None, **settings: Any) -> dict:
+        for ref in [model, *(agent_models or {}).values()]:
+            if ref:
+                split(ref)
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         d = get_design(design)
@@ -79,9 +84,10 @@ class VerificationService:
             return self.status(thread_id)
         init = dict(DEFAULTS)
         init.update({k: v for k, v in settings.items() if k in DEFAULTS and v is not None})
+        init.update(model=model or "", agent_models={k: v for k, v in (agent_models or {}).items() if v})
         init.update(design=design, mode=mode, language=language, run_root=str(self.runs_dir / thread_id),
                     iteration=0, blocks=[], assertions=[], history=[], events=[], runs=[], covered=[],
-                    llm_model=self.llm_model or "none (deterministic fallbacks)")
+                    llm_model=model or self.llm_model or "none (deterministic fallbacks)")
         return self._drive(init, thread_id, on_event)
 
     def respond(self, thread_id: str, action: str = "approve", feedback: str = "",
@@ -121,6 +127,8 @@ class VerificationService:
             "events": v.get("events", []),
             "runs": v.get("runs", []),
             "llm_model": v.get("llm_model", ""),
+            "model": v.get("model", ""),
+            "agent_models": v.get("agent_models") or {},
             "pending": interrupts[0].value if interrupts else None,
             "settings": {k: v.get(k, d) for k, d in DEFAULTS.items()},
         }

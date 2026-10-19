@@ -112,7 +112,7 @@ def structure_problems(tb: str, lang: str, top: str, tasks: list[dict] | None = 
 
 
 def architect(design: Design, plan: list[dict], language: str, ask: Callable[..., str | None], workdir: Path,
-              feedback: str = "") -> dict:
+              feedback: str = "", compact: bool = False) -> dict:
     """Write and validate a testbench. Returns {"ok": True, "sv": ..., "uvm": ..., ...} or {"ok": False, ...}."""
     info = rtl.ports(design.sources(), design.extra.get("top"))
     top, gates = info["top"], []
@@ -121,17 +121,28 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
         gates.append({"gate": name, "ok": ok, "detail": detail})
         events.emit("tb_gate", gate=name, ok=ok, detail=detail)
 
-    base = prompts.TB_USER.format(
-        spec=design.spec(), rtl="\n\n".join(f"// {n}\n{t}" for n, t in design.sources().items()), top=top,
-        ports=_ports_text(info), clock=info["clock"] or "none (combinational)", reset=info["reset"] or "none",
-        plan=json.dumps(plan, indent=1), feedback=f"\nReviewer feedback: {feedback}\n" if feedback else "")
+    from agent.nodes import compact_plan, spec_digest
+
+    rtl_text = "\n\n".join(f"// {n}\n{t}" for n, t in design.sources().items())
+
+    def prompt_for(spec: str, rtl_src: str) -> str:
+        return prompts.TB_USER.format(
+            spec=spec, rtl=rtl_src or "(omitted; the port list below is exact)", top=top, ports=_ports_text(info),
+            clock=info["clock"] or "none (combinational)", reset=info["reset"] or "none",
+            plan=compact_plan(plan) if compact else json.dumps(plan, indent=1),
+            feedback=f"\nReviewer feedback: {feedback}\n" if feedback else "")
+
+    # On a small request budget the first prompt gets a spec digest, and repairs drop the RTL,
+    # since they also carry the previous testbench.
+    base = prompt_for(spec_digest(design.spec(), 3500) if compact else design.spec(), rtl_text)
+    repair_base = prompt_for(spec_digest(design.spec(), 2500), "") if compact else base
     failed: tuple[str, str, str] | None = None
     retried = set()
     sv = tasks = None
     how = waves = ""
     for attempt in range(MAX_SV_TRIES):
-        prompt = base if failed is None else base + "\n\n" + prompts.TB_REPAIR.format(
-            gate=failed[0], detail=failed[1][:3000], testbench=failed[2])
+        prompt = base if failed is None else repair_base + "\n\n" + prompts.TB_REPAIR.format(
+            gate=failed[0], detail=failed[1][:1500 if compact else 3000], testbench=failed[2])
         text = ask(prompts.TB_SYSTEM, prompt, "testbench_architect")
         if not text:
             return {"ok": False, "reason": "the LLM did not answer", "gates": gates}
@@ -226,7 +237,8 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
     for attempt in range(MAX_UVM_TRIES):
         fb = "" if failed is None else (f"\nYOUR PREVIOUS UVM TESTBENCH FAILED: {failed[0]}\n{failed[1][:3000]}\n"
                                         f"Previous version:\n{failed[2]}\nFix it.")
-        text = ask(prompts.TB_SYSTEM, prompts.UVM_USER.format(spec=design.spec(), top=top, ports=_ports_text(info),
+        text = ask(prompts.TB_SYSTEM, prompts.UVM_USER.format(spec=spec_digest(design.spec(), 1500) if compact
+                                                              else design.spec(), top=top, ports=_ports_text(info),
                                                               sv_testbench=sv, feedback=fb), "testbench_architect")
         ub = extract_testbench(text)
         probs = structure_problems(ub, "uvm", top, tasks)
