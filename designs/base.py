@@ -44,6 +44,8 @@ class Design:
     clock: str = "tb.clk"
     wave_signals: tuple[str, ...] = ()
     extra: dict = field(default_factory=dict)
+    kind: str = "builtin"
+    templates: dict[str, str] = field(default_factory=dict)
 
     def sources(self) -> dict[str, str]:
         return {f: (self.root / f).read_text() for f in self.rtl_files}
@@ -52,13 +54,28 @@ class Design:
         return (self.root / "spec.md").read_text()
 
     def languages(self) -> list[str]:
+        """Languages a session can use: hand-written templates, or both when a testbench gets generated."""
+        if self.templates or not self.has_handwritten_tb():
+            return ["sv", "uvm"]
         return [lang for lang, f in (("sv", "harness.sv"), ("uvm", "harness_uvm.sv")) if (self.root / f).exists()]
 
+    def has_handwritten_tb(self) -> bool:
+        return (self.root / "harness.sv").exists()
+
     def template(self, lang: str = "sv") -> str:
-        return (self.root / ("harness_uvm.sv" if lang == "uvm" else "harness.sv")).read_text()
+        if lang in self.templates:
+            return self.templates[lang]
+        path = self.root / ("harness_uvm.sv" if lang == "uvm" else "harness.sv")
+        if not path.exists():
+            raise FileNotFoundError(f"{self.name} has no {lang} testbench yet; generate one first")
+        return path.read_text()
 
     def covergroup(self) -> str:
-        m = re.search(r"^\s*covergroup\b.*?^\s*endgroup", self.template(), re.S | re.M)
+        try:
+            text = self.template()
+        except FileNotFoundError:
+            return ""
+        m = re.search(r"^\s*covergroup\b.*?^\s*endgroup", text, re.S | re.M)
         return m.group(0) if m else ""
 
     def mutant_sources(self, mutant: Mutant) -> dict[str, str]:

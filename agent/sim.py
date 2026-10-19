@@ -60,6 +60,7 @@ def prepare(run_dir: Path, sources: dict[str, str], testbench: str, top: str = "
     """Write sources, testbench.sv and run.sh into run_dir. Returns the script path."""
     run_dir.mkdir(parents=True, exist_ok=True)
     for name, text in sources.items():
+        (run_dir / name).parent.mkdir(parents=True, exist_ok=True)
         (run_dir / name).write_text(text)
     (run_dir / "testbench.sv").write_text(testbench)
     script = run_dir / "run.sh"
