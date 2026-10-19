@@ -30,6 +30,24 @@ def _tag(text: str, tag: str) -> str:
     return strip_fences(m.group(1)) if m else ""
 
 
+def spec_digest(spec: str, limit: int = 4000) -> str:
+    """Overview, requirements and corner cases of a long spec, to keep later prompts small."""
+    if len(spec) <= limit:
+        return spec
+    sections = re.split(r"(?m)^(?=#{1,3} )", spec)
+    keep = [sec for sec in sections if re.match(r"#{1,3} .*(overview|requirement|interesting|corner|behaviou?r)", sec, re.I)]
+    return ("\n".join(keep) or spec)[:limit]
+
+
+def compact_covergroup(text: str, limit: int = 3000) -> str:
+    lines = [l.strip() for l in text.splitlines() if re.search(r"\b(coverpoint|cross|bins|covergroup)\b", l)]
+    return "\n".join(lines)[:limit]
+
+
+def compact_plan(plan: list[dict]) -> str:
+    return json.dumps([{k: p[k] for k in ("feature", "coverpoints") if k in p} for p in plan])
+
+
 def _uncovered(result: dict | None) -> list[str]:
     return [k for k, v in (result or {}).get("bins", {}).items() if v == 0]
 
@@ -268,10 +286,10 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 feedback += f"Reviewer feedback: {state['feedback']}\n"
             fp = result.get("functional_pct")
             text = ask(prompts.STIMULUS_SYSTEM, prompts.STIMULUS_USER.format(
-                spec=d.spec(),
+                spec=spec_digest(d.spec()),
                 harness=d.harness_doc + (UVM_NOTE if state.get("language") == "uvm" else ""),
-                covergroup=d.covergroup(),
-                plan=json.dumps(state.get("plan", []), indent=1),
+                covergroup=compact_covergroup(d.covergroup()),
+                plan=compact_plan(state.get("plan", [])),
                 iteration=it,
                 previous=[b.get("focus", "") for b in blocks] or "none",
                 coverage=f"{fp:.2f}%" if fp is not None else "not run yet",
@@ -445,7 +463,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         kind = "rule"
         if not done:
             text = ask(prompts.ANALYST_SYSTEM, prompts.ANALYST_USER.format(
-                plan=json.dumps(state.get("plan", []), indent=1), iteration=it, focus=record["focus"],
+                plan=compact_plan(state.get("plan", [])), iteration=it, focus=record["focus"],
                 history=history, points=res.get("point_pct", {}), uncovered=uncovered or "none",
                 code=_code_summary(res), missed=_missed(res)), "coverage_analyst")
             if text:

@@ -208,7 +208,11 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
         "ok": True,
         "sv": sv,
         "drivers": tasks,
-        "harness_doc": how or "Driver tasks: " + ", ".join(f"{t['name']}(...)" for t in tasks),
+        "harness_doc": (how + "\n\n" if how else "") + "Exact driver signatures. Call them positionally, one call "
+                       "per transaction, with sized literals:\n" + "\n".join(
+                           f"{t['name']}(" + ", ".join(f"logic [{a['width'] - 1}:0] {a['name']}" if a["width"] > 1
+                                                       else f"logic {a['name']}" for a in t["args"]) + ")"
+                           for t in tasks),
         "signals": f"DUT ports at tb level: {ports_line}. Reference-model predictions: exp_<output>. "
                    f"Clock: clk; inputs change on the falling edge.",
         "wave_signals": [w if w.startswith("tb.") else f"tb.{w}" for w in re.split(r"[,\s]+", waves) if w],
