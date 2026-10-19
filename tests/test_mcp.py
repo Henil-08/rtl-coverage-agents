@@ -27,3 +27,12 @@ def test_session_tools_walk_the_approval_gates():
         st = server.respond(st["session_id"])
     assert st["result"]["functional_pct"] == 100.0
     assert server.run_mutation_testing(st["session_id"])["caught"] == 10
+
+
+def test_upload_tool(tmp_path, monkeypatch):
+    from designs import user
+
+    monkeypatch.setattr(user, "USER_DIR", tmp_path / "ud")
+    rtl = "module inv(input logic clk, input logic a, output logic y);\nalways_ff @(posedge clk) y <= ~a;\nendmodule\n"
+    out = server.upload_design("inv", {"inv.sv": rtl}, "- R1: y is not a, one cycle later")
+    assert out["name"] == "inv" and {p["name"] for p in out["ports"]} == {"clk", "a", "y"}

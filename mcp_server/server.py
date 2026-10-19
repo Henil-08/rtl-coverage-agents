@@ -10,6 +10,7 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 from agent.llm import get_llm  # noqa: E402
 from agent.service import VerificationService  # noqa: E402
 from designs import get_design  # noqa: E402
+from designs import user  # noqa: E402
 from designs.base import split_assertions  # noqa: E402
 
 mcp = MCPServer(
@@ -55,6 +56,8 @@ def _view(status: dict) -> dict:
         "design": status["design"],
         "mode": status["mode"],
         "language": status["language"],
+        "tb_source": status["tb_source"],
+        "testbench_gates": status["gen_tb"].get("gates", []),
         "iteration": status["iteration"],
         "done": status["done"],
         "stop_reason": status["stop_reason"],
@@ -93,15 +96,25 @@ def start_session(
     design: str,
     mode: str = "auto",
     language: str = "sv",
+    tb_source: str = "handwritten",
     target_pct: float | None = None,
     toggle_target: float | None = None,
     max_iters: int | None = None,
 ) -> dict:
     """Start the agent loop. mode: auto (runs to the end), approval (pauses at every review gate),
     manual (pauses so a person runs the generated run.sh). language: sv (plain SystemVerilog testbench)
-    or uvm (UVM testbench, slower to build). Returns where it stopped or paused."""
-    return _view(svc().start(design, mode, language=language, target_pct=target_pct,
+    or uvm (UVM testbench, slower to build). tb_source: handwritten, or generated to have the testbench
+    architect write it from the spec (uploaded designs always use generated). Returns where it stopped or paused."""
+    return _view(svc().start(design, mode, language=language, tb_source=tb_source, target_pct=target_pct,
                              toggle_target=toggle_target, max_iters=max_iters))
+
+
+@mcp.tool()
+def upload_design(name: str, rtl: dict[str, str], spec: str, title: str = "", top: str = "") -> dict:
+    """Add a design: rtl maps file names to SystemVerilog/Verilog source, spec is the design spec as text.
+    The RTL is linted, its ports read and ten mutants generated. Sessions on it use an agent-written testbench."""
+    d = user.create(name, rtl, spec, title=title, top=top or None)
+    return {"name": d.name, "ports": d.extra["ports"], "mutants": [m.description for m in d.mutants]}
 
 
 @mcp.tool()
