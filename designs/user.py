@@ -8,7 +8,6 @@ import re
 import shutil
 from pathlib import Path
 
-from agent.mutate import generate as generate_mutants
 from agent.rtl import RtlError, lint, ports
 from designs.base import Design, Mutant
 from designs.generic import fallback_for, random_stimulus_for
@@ -49,6 +48,8 @@ def create(name: str, rtl: dict[str, str], spec: str, title: str = "", top: str 
     (root / "spec.md").write_text(spec)
     if spec_original:
         (root / spec_original[0]).write_bytes(spec_original[1])
+    from agent.mutate import generate as generate_mutants
+
     mutants = generate_mutants(rtl, info["top"])
     meta = {"name": name, "title": title or info["top"], "top": info["top"], "ports": info["ports"],
             "clock": info["clock"], "reset": info["reset"], "rtl_files": [Path(f).name for f in rtl],
