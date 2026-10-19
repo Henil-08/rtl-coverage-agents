@@ -1,163 +1,140 @@
 # rtl-coverage-agents
 
-LLM agents that do the core loop of a design-verification (DV) engineer on small SystemVerilog
-designs, using the open-source simulator Verilator.
+LLM agents that run the design-verification (DV) flow on SystemVerilog designs, using the open-source
+simulator Verilator. Upload RTL and a spec, and the agents:
 
-You give it a design (RTL plus a written spec). The agents then:
-
-1. read the spec and search a library of public datasheets and verification papers;
+1. read the spec, along with a library of public datasheets and verification papers;
 2. write a verification plan;
-3. write SystemVerilog assertions;
-4. generate test stimulus aimed at whatever is still untested;
-5. run the simulator, collecting functional, toggle, branch and expression coverage plus waveforms;
-6. triage every failure;
-7. stop when coverage is closed;
-8. finish with mutation testing: they plant ten known bugs and check how many the tests catch.
+3. **write the testbench**: driver tasks, a reference model and a coverage model, in plain
+   SystemVerilog or full UVM;
+4. write assertions;
+5. generate tests aimed at whatever is still untested;
+6. run Verilator, collecting functional, toggle, branch and expression coverage and waveforms;
+7. triage every failure;
+8. stop when coverage is closed;
+9. finally plant ten bugs (mutation testing) to check that the tests would catch them.
 
-Each run can be fully automatic, pause for your approval at every step, or wait for you to run the
-simulator yourself. The testbench can be plain SystemVerilog or UVM.
+Everything streams live into a React UI as it happens. Any agent can use any model: Groq, Anthropic
+(Claude), OpenAI, a local model through Ollama or LM Studio, or **Claude Code itself over MCP**,
+with no API key.
 
-![Finished session on the dual-port RAM](media/session.png)
+![Live session](media/session.png)
 
-## What this automates, and what it doesn't
+## The DV flow, and who does each step
 
-A DV engineer's job is to prove a chip design does what its spec says before it is manufactured.
-Here is how that job maps onto this project:
-
-| DV engineer's step | Done here by | Automated? |
-|---|---|---|
-| Read the spec and related material | Planner + knowledge base | yes |
-| Write a verification plan | Planner | yes |
-| Build the testbench: drivers, reference model, coverage model | a person, once per design (`designs/<name>/harness*.sv`) | **no** |
-| Write assertions | Assertion writer | yes, then checked by triage |
-| Write tests aimed at coverage holes | Stimulus writer | yes |
-| Run simulations | Verilator | yes |
-| Debug failures, look at waveforms | Triage (classifies) + Waveforms tab (for you) | partly |
-| Decide when coverage is good enough | Coverage analyst | yes |
-| Check the tests would catch real bugs | Mutation testing | yes |
-
-So it is not yet "drop in any design and spec sheet". Each design needs a hand-written testbench
-template once: how to drive the pins, a reference model that predicts the right outputs, and the
-covergroup. After that, every session is the agents' work. See
-[Adding a design](#adding-a-design).
+| DV engineer's step | Here |
+|---|---|
+| Read the spec | Planner, with a knowledge base of about 420 public documents |
+| Write the test plan | Planner (features, coverpoints, risks, cited sources) |
+| Write the testbench in SV / UVM | **Testbench architect**, checked by five gates, or a hand-written testbench |
+| Write tests, find bugs | Assertion writer + stimulus writer, Verilator, triage |
+| Functional and code coverage | Verilator `--coverage`, coverage analyst |
+| Sign-off | Stop rule (targets, plateau, iteration cap) + mutation score + report |
 
 ## Screenshots
 
 | | |
 |---|---|
-| ![Setup](media/setup.png) **Setup.** Pick a design, testbench language, mode, knowledge base and stop rule. | ![Live run](media/live_run.png) **Live run.** Each agent lights up as it works. |
-| ![Plan with references](media/plan.png) **Plan.** Every feature cites the knowledge-base passages behind it. | ![Approval gate](media/approval_gate.png) **Approval mode.** Review each new block of stimulus before it runs. |
-| ![Coverage](media/coverage.png) **Coverage.** Functional coverage per coverpoint plus toggle, branch and expression coverage of the RTL. | ![Waveform](media/waveform.png) **Waveforms.** A failure, with the DUT's outputs next to the reference model's expected values. |
-| ![Mutation testing](media/mutation.png) **Mutation testing.** Ten planted bugs and what caught each one. | ![Report](media/report.png) **Report.** The whole session, downloadable with every waveform. |
+| ![Library](media/library.png) **Design library.** Built-in designs, your uploads, and an upload card. | ![Design](media/design.png) **Design page.** Spec sheet with timing diagrams; pick testbench source, language, model and mode. |
+| ![Testbench](media/testbench.png) **Testbench architect.** Each gate reports as it runs; here a small model fails the compile gate and gets the errors back to fix. | ![Simulator](media/live_sim.png) **Live simulator.** Verilator output streams while bins light up. |
+| ![Waveforms](media/waves.png) **Waveforms.** DUT outputs next to the reference model (violet); failing cycles in red. | ![Mutants](media/mutants.png) **Mutation testing.** Cards flip to caught or survived as each mutant finishes. |
+| ![Models](media/models.png) **Models.** Cloud and local providers; download Ollama models in the app. | ![Dark](media/session_dark.png) **Dark theme.** |
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/) and [Verilator](https://verilator.org) 5.052 or newer.
+You need [uv](https://docs.astral.sh/uv/), [Node 20+](https://nodejs.org) and
+[Verilator](https://verilator.org) 5.052 or newer.
 
 ```bash
 git clone --recursive https://github.com/Henil-08/rtl-coverage-agents.git   # --recursive pulls the UVM library
 cd rtl-coverage-agents
-brew install verilator          # macOS; on Linux use your package manager or build from source
+brew install verilator                 # macOS; on Linux use your package manager or build from source
 uv sync
-cp .env.example .env            # put your GROQ_API_KEY here; without it the agents use deterministic fallbacks
+cp .env.example .env                   # add at least one model provider (see "Models")
+(cd frontend && npm install && npm run build)
 
-# First-time setup: build the knowledge base. Downloads about 275 public documents (~170 MB) and
-# indexes them with the UVM library source: about 16,000 passages, 15-20 minutes, all gitignored.
+# First-time setup: the knowledge base. Downloads about 275 public documents (~170 MB), indexes them with the
+# UVM library source (~16,500 passages), takes 15-20 minutes, and stays out of git.
 uv run python -m rag build
 
-uv run streamlit run app.py
+uv run python -m server                # open http://localhost:8000
 ```
 
 If you cloned without `--recursive`, run `git submodule update --init` before using UVM.
 
-`uv run pytest -q` runs the test suite in about 4 minutes. Every test builds real Verilator
-simulations.
+To work on the frontend, run `uv run python -m server` in one terminal and `cd frontend && npm run dev`
+in another (http://localhost:5173, proxied to the API). `uv run pytest -q` runs the test suite in
+about six minutes, with real Verilator builds throughout.
+
+## Models
+
+Pick a model per session on the design page, and optionally a different one per agent. A small model
+is fine for analysis; the testbench architect needs your strongest one.
+
+| Provider | Setup | Notes |
+|---|---|---|
+| Groq | `GROQ_API_KEY` in `.env` | Fast. The free tier allows 8,000 tokens a minute and 200,000 a day **per model**. The agents trim prompts to fit, wait out short limits, and report a used-up daily quota instead of hanging. |
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` |
+| OpenAI | `OPENAI_API_KEY` | Models are listed from your account. |
+| Ollama (local) | Install [Ollama](https://ollama.com) | Start it and download models from the Models page. Uses a 16k context (`OLLAMA_NUM_CTX`). |
+| LM Studio (local) | Start its local server | Uses the models you've loaded in LM Studio. |
+| Claude Code over MCP | `claude mcp add` (below) | Model `mcp:claude`: each agent step pauses and Claude Code answers it. No API key needed. |
+
+`DEFAULT_LLM=provider:model` in `.env` sets the default for new sessions.
+
+What we've seen so far:
+- **Testbench architect.** Writing a whole self-checking testbench needs a strong model. Groq's
+  `gpt-oss-120b` passes the gates after a few repairs. Local 7B models (`qwen2.5-coder:7b`, a
+  Verilog-tuned 7B) keep failing the structure gate, so the gate correctly refuses their testbenches.
+- **Other agents.** A small local model can run the rest of the loop on top of a hand-written
+  testbench, but less well (see Results).
 
 ## Using it
 
-**Designs.**
-- `dpram`: a true dual-port RAM (8-bit × 16, one clock, read-first, port A wins write collisions). The main target.
-- `adder4`: a 4-bit ripple-carry adder, used as a quick sanity check.
+- **Designs.** Built in:
+  - `dpram`: true dual-port RAM, 8-bit × 16, read-first, port A wins collisions;
+  - `adder4`: 4-bit adder.
 
-**Modes**
-
-| Mode | What happens |
-|---|---|
-| Auto | The agents run everything, the simulator included, and stop on their own. |
-| Approval | The loop pauses after the plan, the assertions, each block of stimulus and each result. Approve, reject with feedback (that agent redoes the step), or stop. |
-| Manual | The agents write each test. You run the shown `bash …/run.sh` and click "I ran it", and they read the results from the run folder. |
-
-**Testbench language**
-
-| | What the agents write into | Build time |
-|---|---|---|
-| SystemVerilog | tasks in a module-based testbench with an inline reference model and covergroup | about 2 s |
-| UVM | `uvm_sequence` bodies. The bench has a sequence item, sequencer, driver, monitor, scoreboard (reference model), coverage subscriber, env and test. | about 20 s |
-
-Both expose the same stimulus calls and the same covergroup, so coverage and mutation results are
-directly comparable. UVM comes from the [verilator/uvm](https://github.com/verilator/uvm) build of
-UVM 2020, pinned in `third_party/uvm`.
-
-**When to stop.** The loop ends at the first of these:
-- functional coverage reaches its target *and* toggle coverage reaches its target;
-- the maximum number of iterations;
-- a plateau: for the last N rounds (the plateau window), neither coverage rose by the minimum gain;
-- the reference model disagrees with the design. That might be a real design bug, so it stops for a human.
-
-**After a run**
-
-| Tab | Shows |
-|---|---|
-| Report | everything that happened, as one document. Download `report.md`, or a zip with the session JSON, final testbench, RTL and every waveform. |
-| Waveforms | any run, jumping straight to a failure. Download the VCD for GTKWave or Surfer. |
-| Mutation testing | runs the ten planted bugs and shows how each caught one appears in the waveform. |
-| Coverage | per-coverpoint coverage, uncovered bins and missed toggle/branch points. |
-
-## Knowledge base
-
-`uv run python -m rag build` reads `knowledge/sources.toml` and downloads everything it lists into
-`knowledge/docs/`:
-
-- **Standards and manuals.** Accellera's UVM 1.2 User's Guide and Class Reference, the full Verilator
-  manual, and the RISC-V ISA manual.
-- **Memory datasheets.** Dual-port SRAM collision behaviour (Microchip), Xilinx block RAM read-first
-  and write-first modes (Block Memory Generator, Spartan-6 UG383), and Lattice memory usage.
-- **Conference papers.** 31 DVCon papers on coverage closure, scoreboards, assertions, formal
-  verification, regressions and mutation analysis.
-- **Research.** About 90 arXiv papers on LLM-assisted verification, assertion generation, testbench
-  generation and coverage closure.
-- **Methodology.** OpenTitan's DV methodology docs and tutorial pages on SVA, coverage and UVM.
-- **Background.** 79 Wikipedia articles on verification, memories, buses, test and EDA.
-- **Local source.** The UVM library in the submodule (168 files), which works as an API reference.
-
-On a full build that comes to about 420 sources and 16,500 passages: 170 MB of documents and a
-45 MB index.
-
-It then splits everything into passages that keep their page numbers and builds two indexes:
-- **BM25** for keywords;
-- **`bge-small-en-v1.5` embeddings** (run locally via fastembed) for meaning.
-
-Searches use both and merge the rankings.
-
-Nothing downloaded is committed: `knowledge/docs/`, `knowledge/index/` and the embedding model are
-gitignored, and every document stays under its publisher's licence.
-
-- **Grow it.** Add a line to `sources.toml`, or drop files into `knowledge/docs/` and run
-  `uv run python -m rag index`.
-- **Search it from the terminal.** `uv run python -m rag search "write collision priority"`.
-- **What the planner does with it.** It searches with each behaviour and corner case in the spec,
-  reads the best passages and cites them (`S1`, `S2`, …). Every feature in the plan links to a
-  passage.
+  Both have datasheet-style specs with numbered requirements, and both come with hand-written SV and
+  UVM testbenches. **Upload** your own RTL and spec (PDF, Markdown or text) on the library page;
+  `examples/sync_fifo/` is ready to try. Uploads are linted, their ports are read by Verilator, ten
+  generic mutants are generated, and everything is kept in `user_designs/` (gitignored).
+- **Testbench.**
+  - *Hand-written:* built-in designs only.
+  - *Agent-written:* the testbench architect writes it from the spec. Comparing the two on the same
+    design is the most interesting experiment here.
+- **Language.** SystemVerilog (about 2 s per build) or UVM (about 20 s per build). UVM comes from
+  the [verilator/uvm](https://github.com/verilator/uvm) build of UVM 2020, pinned in `third_party/uvm`.
+- **Modes.**
+  - **Auto:** everything runs on its own.
+  - **Approval:** pauses after the plan, the testbench, the assertions, each block of stimulus and
+    each result.
+  - **Manual:** you run each generated `run.sh` yourself.
+- **Stop rule.** The loop stops at the first of:
+  - functional and toggle targets both met;
+  - the iteration cap;
+  - a plateau: no gain of at least the minimum, over the window of iterations;
+  - a reference-model mismatch, which might be a design bug, so it stops for a person.
+- **During and after a run.**
+  - The workbench follows whichever agent is working.
+  - Tabs: Plan (with cited passages), Testbench (with its gates), Assertions, Stimulus, Simulator
+    console, Analysis, Waves, Mutants and Report.
+  - Downloads: `report.md` on its own, or a zip with the report, session JSON, final testbench,
+    RTL and every waveform.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    KB[("<b>Knowledge base</b><br/>spec sheets, papers, manuals")]:::kb -. "retrieves" .-> PLAN["<b>Planner</b><br/>plan"]:::llm
+    KB[("<b>Knowledge base</b><br/>spec sheets, papers, manuals")]:::kb -. "retrieves" .-> PLAN["<b>Planner</b><br/>test plan"]:::llm
     SPEC[/"spec + RTL"/]:::input --> PLAN
-    PLAN --> ASSERT["<b>Assertion<br/>writer</b><br/>SVA"]:::llm
-    ASSERT --> STIM["<b>Stimulus<br/>writer</b><br/>next test"]:::llm
-    STIM --> SIM["<b>Simulator</b><br/>Verilator<br/>SV or UVM bench"]:::tool
+    PLAN --> TBA["<b>Testbench<br/>architect</b><br/>SV or UVM"]:::llm
+    TBA --> GATES{"<b>5 gates</b>"}:::rule
+    GATES -. "failed: repair" .-> TBA
+    GATES -- pass --> ASSERT["<b>Assertion<br/>writer</b><br/>SVA"]:::llm
+    PLAN -. "hand-written<br/>testbench" .-> ASSERT
+    ASSERT --> STIM["<b>Stimulus<br/>writer</b>"]:::llm
+    STIM --> SIM["<b>Simulator</b><br/>Verilator"]:::tool
     SIM --> TRI{"<b>Triage</b>"}:::rule
     TRI -- clean --> AN["<b>Coverage<br/>analyst</b>"]:::llm
     AN -- "next iteration" --> STIM
@@ -181,7 +158,7 @@ flowchart LR
         direction LR
         L1["LLM agent"]:::llm ~~~ L2["Tool"]:::tool ~~~ L3{"Rule"}:::rule ~~~ L4[("Knowledge<br/>base")]:::kb ~~~ L5[/"Input"/]:::input ~~~ L6(["Finish"]):::done ~~~ L7(["Stop for<br/>a human"]):::bad ~~~ E1[" "]:::plain
         E1 -- "main flow" --> E2[" "]:::plain ~~~ E3[" "]:::plain
-        E3 -. "lookup / repair" .-> E4[" "]:::plain
+        E3 -. "lookup / repair /<br/>alternative" .-> E4[" "]:::plain
     end
 
     classDef input fill:#efede6,stroke:#8a867b,color:#1c1b19
@@ -195,143 +172,177 @@ flowchart LR
     style Legend fill:transparent,stroke:#8a867b,stroke-dasharray:4 3
 ```
 
-In approval mode the loop also pauses after the planner, the assertion writer, every stimulus block
-and every analysis. In manual mode the simulator step waits for you to run `run.sh`.
+### Testbench architect and its gates
 
-- **Planner.** Turns `spec.md` into features, the coverpoints that measure each one, the bug that
-  could hide there, and the knowledge-base passages that support it.
-- **Assertion writer.** Writes SVA from the spec and the plan only. It never sees the stimulus, so
-  its assertions can't simply echo the tests.
-- **Stimulus writer.** Writes the next block of stimulus, aimed at uncovered bins, missed
-  toggle/branch/expression points and the analyst's advice. Iterations accumulate: each run replays
-  every earlier block, so coverage always describes the whole suite.
-- **Simulator.** Not an LLM. The steps are:
-  1. write `run.sh`;
-  2. run `verilator --binary --timing --coverage --assert --trace`, with the UVM package added for UVM benches;
-  3. run the binary;
-  4. parse the log (failures with timestamps), `coverage.dat` (every bin and code-coverage point) and `wave.vcd`.
-- **Triage.** Fixed rules, with an LLM explanation for mismatches:
-  - a compile error goes back to whichever writer caused it;
-  - an assertion that fires while the reference model is clean is a wrong assertion, so it's repaired once, then dropped;
-  - a reference-model mismatch stops the loop as a possible design bug.
-- **Coverage analyst.** Applies the stop rule above. Otherwise it names the next thing to cover.
+The architect gets three things:
+- the spec;
+- the plan;
+- the port list, read from the RTL by Verilator so pin names and widths are never guessed.
 
-Everything runs as a LangGraph state machine, checkpointed to SQLite. Sessions survive restarts and
-are shared between the Streamlit app and the MCP server.
+It writes a testbench template with:
+- driver tasks;
+- a reference model that sets `exp_<output>` signals for every output;
+- a covergroup;
+- a waveform dump;
+- marker comments where the other agents insert assertions and stimulus.
+
+Nothing is built on it until it passes these gates. A failure goes back to the architect with the
+details, for up to six attempts:
+
+| Gate | Checks |
+|---|---|
+| Structure | The markers are in the right places, the DUT is instantiated as `dut`, there's no example stimulus, and the covergroup isn't a placeholder. |
+| Compiles | Verilator builds it. |
+| Golden run | 300 random transactions run through every inserted call, with no reference-model mismatch. If the architect insists the RTL breaks the spec, the session stops as a possible design bug. |
+| Coverage reachable | Random stimulus hits every coverpoint. |
+| Catches bugs | Random stimulus through its checker catches at least one planted mutant. |
+
+For UVM, it then writes the full UVM bench (sequence item, sequences, driver, monitor, scoreboard,
+coverage subscriber, env and test). That bench has to compile, pass the same random run, and hit the
+same bins as the SV version.
+
+These gates exist because of real failures in early runs:
+- a testbench whose stimulus marker sat outside the `initial` block, so no generated test ever ran;
+- drivers that could never make both RAM ports act in the same cycle;
+- a two-coverpoint "placeholder" covergroup.
+
+### The other agents
+
+- **Assertion writer.** Writes SVA from the spec only. It never sees the tests.
+- **Triage.**
+  - An assertion that fires while the reference model is clean is a wrong assertion: it gets
+    repaired once, then dropped.
+  - Compile errors go back to whichever agent wrote the broken code.
+- **Stimulus writer.** Targets uncovered bins and missed code-coverage points.
+- **Coverage analyst.** Picks the next target and applies the stop rule.
+- **State.** Sessions are LangGraph state machines checkpointed to SQLite, shared by the web server
+  and the MCP server.
+
+## Knowledge base
+
+`uv run python -m rag build` reads `knowledge/sources.toml` and downloads:
+- the UVM 1.2 User's Guide and Class Reference;
+- the full Verilator manual;
+- the RISC-V ISA manual;
+- memory datasheets (Microchip, Xilinx block RAM);
+- 31 DVCon papers;
+- about 90 arXiv papers on LLM-assisted verification;
+- OpenTitan's DV docs;
+- tutorials and 79 Wikipedia articles.
+
+It also indexes the UVM library source from the submodule.
+
+Passages keep their page numbers and are searched two ways: BM25 for keywords, and local
+`bge-small-en-v1.5` embeddings for meaning. The two rankings are merged.
+
+The planner searches with each requirement and corner case in the spec and cites what it used.
+- **Grow it:** add entries to `sources.toml`, or drop files into `knowledge/docs/` and run
+  `uv run python -m rag index`.
+- **Kept out of git:** downloaded documents and the index.
 
 ## Results
 
-Runs without an LLM (deterministic fallback generators), from `uv run python -m agent.bench --mutants`.
-The curves are in `bench/`.
+**Agent-written vs hand-written testbench, dual-port RAM**
+
+Groq `gpt-oss-120b`, testbench written from the spec alone:
+
+| | Hand-written testbench | Agent-written testbench |
+|---|---|---|
+| Mutants caught | 9/10 (misses M10) | 9/10 (misses M04) |
+| Toggle coverage | 100% | 83% |
+
+Functional coverage is measured against each testbench's own coverage model, so it isn't directly
+comparable between the two.
+
+**Small local model, dual-port RAM**
+
+Every agent on Ollama `qwen2.5-coder:7b`, running on a laptop with no API, using the hand-written
+testbench:
+- 72.5% functional coverage and 34% toggle coverage, ending on a plateau;
+- 7/10 mutants caught.
+
+Several of its stimulus blocks didn't compile, and the deterministic fallback stepped in each time.
+
+**Agent vs random stimulus** (no LLM: the agents' deterministic fallbacks), from
+`uv run python -m agent.bench --mutants`:
 
 | Design | Run | Stimulus to 100% functional coverage | Mutants caught |
 |---|---|---|---|
-| dpram | agent | 43 cycles (toggle ≥ 90% at 123) | 9/10 (M10 survives) |
-| dpram | random, 5 seeds | not reached within 320 cycles on any seed | 10/10 on 4 seeds, 9/10 on 1 |
+| dpram | agent | 43 cycles (toggle ≥ 90% at 123) | 9/10 |
+| dpram | random, 5 seeds | not reached within 320 cycles | 10/10 on 4 seeds |
 | adder4 | agent | 16 vectors | 10/10 |
-| adder4 | random, 5 seeds | 136 vectors on 1 seed, not reached within 160 on the other 4 | 10/10 |
+| adder4 | random, 5 seeds | 136 vectors on 1 seed only | 10/10 |
 
-- **Closing coverage.** Directed stimulus closes functional coverage much faster than random
-  stimulus, which keeps missing exact corners such as 0x00/0xFF writes and same-address collisions.
-- **Catching bugs.** On the RAM, random stimulus catches more mutants. M10 is a collision compare
-  that ignores the top address bit. Only writes to two addresses that differ in that bit expose it,
-  and no coverage bin asks for that. So 100% functional coverage does not mean every bug is found:
-  the coverage model has a hole.
-- **With an LLM** (Groq `openai/gpt-oss-120b`), results vary from run to run.
-  - **Planner.** It used the knowledge base to add risks the spec never states, such as
-    write-through and address wrap.
-  - **Assertion writer.** Several of its assertions fired on the correct design. Triage caught and
-    dropped them.
-  - **Mutation testing.** Suites caught 9/10 mutants. Most catches came from the reference model,
-    not from the LLM's assertions.
-
-## Adding a design
-
-Create `designs/<name>/` with:
-
-| File | Contents |
-|---|---|
-| `<name>.sv` | the RTL |
-| `spec.md` | the spec in plain English, with a "Behaviour" list and an "Interesting cases" list. The planner queries the knowledge base with these. |
-| `harness.sv` | the SystemVerilog testbench template: driver tasks, reference model, covergroup, and `// @ASSERTIONS`, `// @STIMULUS_TASKS`, `// @STIMULUS_CALLS` markers. Optionally add `harness_uvm.sv` with `// @SEQUENCES` and `// @SEQUENCE_CALLS`. |
-| `__init__.py` | a `Design` with the driver task names, the signals assertions may use, ten mutants (find/replace edits of the RTL), a fallback generator and a random generator |
-
-Then register it in `designs/__init__.py`. Writing the reference model and covergroup is the part
-that still needs a DV engineer.
-
-## Hardware background
-
-- **RTL.** The hardware description (here SystemVerilog) that eventually becomes a chip.
-- **DUT.** The design under test.
-- **Testbench.** Code around the DUT that drives inputs and checks outputs. It never becomes hardware.
-- **Reference model / scoreboard.** A simple model that predicts the correct output for every input.
-  A mismatch means a bug somewhere.
-- **SVA.** SystemVerilog Assertions: rules checked every clock, e.g. `!en_a |=> $stable(rdata_a)`
-  (if port A is idle, its read data must not change on the next cycle).
-- **Functional coverage.** A `covergroup` lists behaviours that must be seen at least once, each as a
-  *bin*. Examples: both ports writing the same address in one cycle; reading the last address;
-  writing 0xAA.
-- **Code coverage.** Did every signal bit toggle both ways (toggle), every `if` go both ways
-  (branch), and every expression see each input combination (expression)?
-- **Waveform.** Every signal's value over time, viewed like an oscilloscope. It's how engineers debug
-  a failure.
-- **Mutation testing.** Plant a known bug (stuck-at, inverted condition, off-by-one), rerun the suite,
-  and see whether it fails. Coverage says the tests *exercised* the design; mutation testing shows
-  they would *notice* a bug.
-- **Read-first / write-first.** Whether a port that reads an address being written in the same cycle
-  returns the old or the new value. This RAM is read-first.
-- **Tapeout.** Sending the final design to the factory. Bugs found after it are expensive, which is
-  why this work matters.
+**What these show**
+- **Directed stimulus closes coverage much faster.** Random stimulus keeps missing exact corners.
+- **100% coverage isn't the same as catching every bug.** On the RAM, the bug that escapes
+  (M10, a collision compare that ignores the top address bit) has no coverage bin that asks for it.
+- **Results with an LLM vary from run to run,** so rerun before quoting a number.
 
 ## MCP server
 
 ```bash
-uv run python -m mcp_server.server
 claude mcp add rtl-coverage -- uv run --directory /abs/path/rtl-coverage-agents python -m mcp_server.server
 ```
 
 | Tool | Purpose |
 |---|---|
-| `list_designs`, `describe_design` | spec, RTL, covergroup and how to drive each design |
-| `simulate(design, stimulus, assertions, language)` | run your own stimulus and assertions on Verilator and get coverage back |
-| `start_session(design, mode, language, ...)`, `get_session`, `respond` | run the built-in agents and answer them at review gates |
-| `run_mutation_testing(session_id)` | score a session's suite against its mutants |
+| `list_designs`, `describe_design`, `upload_design` | Browse designs or add your own RTL and spec. |
+| `start_session(design, mode, language, tb_source, model, agent_models, ...)` | Run the agents. |
+| `next_task`, `answer_task` | With `model="mcp:claude"`, Claude Code answers every agent step itself. |
+| `get_session`, `respond` | Follow a session and answer its review gates. |
+| `simulate(design, stimulus, assertions, language)` | Run your own stimulus on Verilator. |
+| `run_mutation_testing` | Score a suite against its mutants. |
 
-An MCP client such as Claude Code can let the built-in agents work, or act as the test writer itself
-through `simulate`.
+To have Claude do the whole flow, ask Claude Code: *"Start a dpram session with model mcp:claude and
+an agent-written testbench, and act as every agent until it's done."* The web UI shows that session
+live as well.
+
+## Adding a design
+
+The easiest way is uploading through the UI or `upload_design`: just RTL and a spec.
+
+To make a **built-in** design with a hand-written testbench, add `designs/<name>/` containing:
+- the RTL;
+- `spec.md`;
+- `harness.sv` (optionally `harness_uvm.sv`) with the marker comments;
+- `__init__.py` defining its `Design` (driver names, mutants, fallback and random generators).
+
+Then register it in `designs/__init__.py`.
+
+## Hardware background
+
+- **RTL.** The hardware description that becomes a chip.
+- **DUT.** The design under test.
+- **Testbench.** Code that drives the DUT's inputs and checks its outputs. It never becomes hardware.
+- **Reference model / scoreboard.** Predicts the correct outputs.
+- **SVA.** Rules checked on every clock edge.
+- **Functional coverage.** Behaviours (bins) that must each be seen at least once.
+- **Code coverage.** Whether every line, branch, toggle and expression was exercised.
+- **Waveform.** Every signal over time, used for debugging.
+- **Mutation testing.** Plant known bugs and see whether the tests notice.
+- **UVM.** The industry-standard class structure for testbenches.
+- **Tapeout.** Sending the design to the fab, after which bugs are very expensive.
 
 ## Layout
 
 ```
-designs/<name>/        RTL, spec.md, testbench templates (harness.sv, harness_uvm.sv), mutants, generators
-agent/nodes.py         the agents and review gates
-agent/graph.py         LangGraph wiring
-agent/sim.py           Verilator runner, coverage.dat and failure parsing
-agent/wave.py          VCD reader and WaveDrom rendering
-agent/mutation.py      parallel mutation runs
-agent/report.py        session report and download bundle
-agent/service.py       session API shared by the UI and the MCP server
-agent/bench.py         agent vs random benchmark
-rag/                   knowledge base: fetch, chunk, BM25 + embedding index, search
-knowledge/sources.toml where the knowledge base comes from
-app.py, ui.py          Streamlit UI
-mcp_server/server.py   MCP tools
-third_party/uvm        UVM library (git submodule)
+designs/            built-in designs (RTL, spec, SV/UVM testbench templates, mutants)
+user_designs/       uploaded designs (gitignored)
+examples/           designs ready to upload
+agent/              agents (nodes.py), testbench architect (tbgen.py), graph, simulator, waveforms,
+                    mutation, models (llm.py), live events, report, benchmark
+rag/, knowledge/    knowledge base
+server/             FastAPI + WebSocket API, serves the built frontend
+frontend/           React UI (Vite, TypeScript, Motion, Monaco)
+mcp_server/         MCP tools
+third_party/uvm     UVM library (submodule)
 ```
 
 ## Limitations
 
-- **Testbench template per design.** Each design needs one written by hand (see above). Generating
-  that from a spec is the obvious next step.
-- **Small designs.** The adder has only 512 possible inputs, so testing all of them beats any agent.
-  The RAM is where directed stimulus matters.
-- **Verilator coverage gaps.** Covergroup support in Verilator is recent. Per-coverpoint
-  `get_inst_coverage()` isn't supported, so coverage is read from `coverage.dat`.
-- **Slow UVM builds.** About 20 seconds each. ccache can't help, because Verilator's precompiled
-  headers keep the path of the folder that built them.
-- **Waveform resolution.** The viewer samples one column per rising clock edge; the VCD download has
-  full resolution.
-- **Blocked vendor downloads.** AMD and Intel block scripted downloads. Put their PDFs in
-  `knowledge/docs/` by hand and run `uv run python -m rag index`.
-- **Rate limits.** Groq's free tier rate-limits quickly. The agents back off, retry, then fall back
-  to the deterministic generators, and the trace says when.
+- **Generated testbenches.** Strong models handle small single-clock blocks; multiple clocks and bus
+  protocols such as AXI are untested.
+- **Verilator.** It covers what these designs need, but its covergroup support is recent and UVM
+  builds take about 20 s each.
+- **Free cloud tiers** run out quickly. Use per-agent models, a local model, or Claude over MCP.
