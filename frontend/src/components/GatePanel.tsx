@@ -11,6 +11,7 @@ const TITLES: Record<string, string> = {
   testbench: 'Review the next block of stimulus',
   results: 'Review the results',
   run_simulation: 'Your turn: run the simulation',
+  llm_task: 'Waiting for Claude Code',
 }
 
 export function GatePanel(props: { pending: Pending; onAnswer: (action: string, feedback: string) => Promise<void> }) {
@@ -29,7 +30,10 @@ export function GatePanel(props: { pending: Pending; onAnswer: (action: string, 
   return (
     <motion.div className="gate-panel" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
-        <h3 style={{ fontSize: 16 }}>{TITLES[p.step] ?? p.step}</h3>
+        <h3 style={{ fontSize: 16 }}>
+          {TITLES[p.step] ?? p.step}
+          {p.step === 'llm_task' && <span className="faint" style={{ fontWeight: 400 }}> · {String(p.agent).replace('_', ' ')}</span>}
+        </h3>
         <span className="faint mono" style={{ fontSize: 12 }}>iteration {p.iteration}</span>
       </div>
       <div style={{ maxHeight: 360, overflowY: 'auto', marginBottom: 12 }}>
@@ -59,6 +63,18 @@ export function GatePanel(props: { pending: Pending; onAnswer: (action: string, 
             {Boolean(p.done) && <div className="hint">The analyst wants to stop: {String(p.stop_reason)}</div>}
           </div>
         )}
+        {p.step === 'llm_task' && (
+          <div className="stack">
+            <div className="muted">
+              This session uses <b>mcp:claude</b>: Claude Code answers each agent step through the <code>next_task</code> and{' '}
+              <code>answer_task</code> MCP tools. You can also answer as the agent yourself below.
+            </div>
+            <details>
+              <summary className="hint" style={{ cursor: 'pointer' }}>What the agent was asked</summary>
+              <pre className="stream" style={{ margin: '8px 0 0', maxHeight: 260 }}>{String(p.prompt ?? '')}</pre>
+            </details>
+          </div>
+        )}
         {p.step === 'run_simulation' && (
           <div className="stack">
             <div className="muted">Run this in a terminal, then continue:</div>
@@ -67,13 +83,23 @@ export function GatePanel(props: { pending: Pending; onAnswer: (action: string, 
         )}
       </div>
       {p.step !== 'run_simulation' && (
-        <textarea className="textarea" placeholder="Feedback: why you reject, or guidance for the next step" value={feedback} onChange={(e) => setFeedback(e.target.value)} style={{ marginBottom: 10 }} />
+        <textarea
+          className="textarea"
+          placeholder={p.step === 'llm_task' ? 'Answer as this agent, in the format its request asks for' : 'Feedback: why you reject, or guidance for the next step'}
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          style={{ marginBottom: 10, minHeight: p.step === 'llm_task' ? 140 : 80 }}
+        />
       )}
       <div className="row">
-        <button className="btn btn-primary" disabled={busy} onClick={() => answer('approve')}>
-          {p.step === 'run_simulation' ? 'I ran it' : 'Approve'}
-        </button>
-        {p.step !== 'results' && p.step !== 'run_simulation' && (
+        {p.step === 'llm_task' ? (
+          <button className="btn btn-primary" disabled={busy || !feedback.trim()} onClick={() => answer('answer')}>Send answer</button>
+        ) : (
+          <button className="btn btn-primary" disabled={busy} onClick={() => answer('approve')}>
+            {p.step === 'run_simulation' ? 'I ran it' : 'Approve'}
+          </button>
+        )}
+        {p.step !== 'results' && p.step !== 'run_simulation' && p.step !== 'llm_task' && (
           <button className="btn" disabled={busy} onClick={() => answer('reject')}>
             Reject and redo
           </button>

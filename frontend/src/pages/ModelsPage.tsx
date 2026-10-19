@@ -9,6 +9,7 @@ const HOW: Record<string, string> = {
   openai: 'Add OPENAI_API_KEY to .env (platform.openai.com).',
   ollama: 'Runs models on this Mac. Start it, then download a model below.',
   lmstudio: 'Open LM Studio, load a model (gpt-oss-20b is already downloaded), and start the local server on port 1234.',
+  mcp: '',
 }
 
 export function ModelsPage() {
@@ -45,7 +46,13 @@ export function ModelsPage() {
                 {p.models.slice(0, 18).map((m) => <Chip key={m}>{m}</Chip>)}
               </div>
             )}
-            {p.ready && <TestBox provider={p} />}
+            {p.ready && p.provider !== 'mcp' && <TestBox provider={p} />}
+            {p.provider === 'mcp' && (
+              <pre className="stream" style={{ margin: 0, fontSize: 11.5 }}>
+                claude mcp add rtl-coverage -- uv run --directory /path/to/repo python -m mcp_server.server{'\n'}
+                then ask Claude Code: "start an adder4 session with model mcp:claude and act as every agent"
+              </pre>
+            )}
             {p.provider === 'ollama' && <OllamaBox provider={p} onChange={load} />}
           </motion.div>
         ))}

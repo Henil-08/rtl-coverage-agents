@@ -203,4 +203,5 @@ export const PROVIDER_LABEL: Record<string, string> = {
   openai: 'OpenAI',
   ollama: 'Ollama (local)',
   lmstudio: 'LM Studio (local)',
+  mcp: 'Claude Code (over MCP)',
 }

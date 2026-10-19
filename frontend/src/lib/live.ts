@@ -45,7 +45,10 @@ function reduce(s: LiveState, e: Ev): LiveState {
       return { ...s, connected: false }
     case 'snapshot': {
       const st = e.status as Status
-      return { ...s, status: st, trace: st.events ?? [], running: st.running, waiting: st.pending }
+      if (e.polled && s.status && s.running) return s
+      if (e.polled && s.status && (st.events?.length ?? 0) === s.trace.length && JSON.stringify(st.pending) === JSON.stringify(s.waiting))
+        return s
+      return { ...s, status: st, trace: st.events ?? [], running: st.running, waiting: st.pending, tick: s.tick + 1 }
     }
     case 'running':
       return { ...s, running: true, waiting: null, error: null, console: e.replay ? s.console : [] }
@@ -83,6 +86,8 @@ function reduce(s: LiveState, e: Ev): LiveState {
       return s.mutation ? { ...s, mutation: { ...s.mutation, running: false } } : s
     case 'waiting':
       return { ...s, waiting: e.pending, activeNode: null }
+    case 'llm_task':
+      return { ...s, activeNode: e.agent }
     case 'finished':
       return { ...s, activeNode: null }
     case 'error':
@@ -114,8 +119,21 @@ export function useLive(sessionId: string | undefined): LiveState {
       }
     }
     open()
+    // Sessions driven by another process (the MCP server) only reach us through polling.
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`)
+        if (res.ok) {
+          const st = await res.json()
+          if (!st.running && st.exists !== false) dispatch({ type: 'snapshot', status: st, polled: true })
+        }
+      } catch {
+        /* server restarting */
+      }
+    }, 4000)
     return () => {
       closed = true
+      clearInterval(poll)
       ws?.close()
     }
   }, [sessionId])
