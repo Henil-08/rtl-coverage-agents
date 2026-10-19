@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from agent import events
 from agent.sim import simulate
 from designs.base import Design
 
@@ -10,7 +12,10 @@ from designs.base import Design
 def run_mutants(design: Design, testbench: str, out_dir: Path, workers: int = 4, uvm: bool = False) -> dict:
     """Run the suite on the golden design and on every mutant. A mutant is caught when the
     run fails; caught_by says whether assertions, the reference model, or both noticed."""
+    events.emit("mutation_start", total=len(design.mutants),
+                mutants=[{"id": m.id, "category": m.category, "description": m.description} for m in design.mutants])
     golden = simulate(out_dir / "golden", design.sources(), testbench, design.dut_hier, uvm)
+    events.emit("mutation_golden", ok=bool(golden.passed))
     if not golden.passed:
         return {"golden_ok": False, "golden_errors": golden.compile_errors or golden.check_failures
                 or golden.assertion_failures, "results": []}
@@ -21,7 +26,7 @@ def run_mutants(design: Design, testbench: str, out_dir: Path, workers: int = 4,
             verdict = "invalid"
         else:
             verdict = "survived" if r.passed else "caught"
-        return {
+        out = {
             "id": m.id,
             "category": m.category,
             "description": m.description,
@@ -33,9 +38,12 @@ def run_mutants(design: Design, testbench: str, out_dir: Path, workers: int = 4,
             "failures": r.failures[:20],
             "wave": r.wave,
         }
+        events.emit("mutant_result", result={k: v for k, v in out.items() if k != "failures"})
+        return out
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(one, design.mutants))
+        ctx = contextvars.copy_context()
+        results = list(pool.map(lambda m: ctx.copy().run(one, m), design.mutants))
     return {"golden_ok": True, "results": results, **score(results)}
 
 
