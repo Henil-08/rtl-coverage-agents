@@ -13,11 +13,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent import events, report, rtl
+from agent import llm as llm_registry
 from agent import wave as W
 from agent.llm import get_llm
 from agent.service import VerificationService
@@ -101,9 +102,8 @@ def _trim_status(st: dict) -> dict:
 @app.get("/api/config")
 def config() -> dict:
     base = kb.load()
-    llm = svc().llm_model
     return {
-        "llm": None if not llm or llm.startswith("none") else llm,
+        "llm": llm_registry.default_ref(),
         "verilator": verilator_available(),
         "uvm": (UVM_SRC / "uvm_pkg.sv").exists(),
         "kb": None if base is None else {"passages": len(base.chunks), "documents": len(base.stats()["docs"]),
@@ -111,6 +111,62 @@ def config() -> dict:
         "defaults": DEFAULTS,
         "modes": list(MODES),
     }
+
+
+# ----------------------------------------------------------------------------------------- models
+
+class ModelRef(BaseModel):
+    ref: str
+
+
+@app.get("/api/models")
+def models() -> dict:
+    return {"default": llm_registry.default_ref(), "providers": llm_registry.catalog()}
+
+
+@app.post("/api/models/test")
+def test_model(body: ModelRef) -> dict:
+    import time
+
+    try:
+        llm = llm_registry.make(body.ref)
+        start = time.monotonic()
+        reply = llm.invoke([("user", "Reply with the single word: ready")])
+        return {"ok": True, "reply": str(getattr(reply, "content", reply))[:80],
+                "seconds": round(time.monotonic() - start, 2)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+
+@app.post("/api/models/ollama/pull")
+def ollama_pull(body: ModelRef) -> StreamingResponse:
+    """Download an Ollama model, streaming its progress as JSON lines."""
+    import json as _json
+    import urllib.request
+
+    def stream():
+        req = urllib.request.Request(llm_registry.local_url("ollama") + "/api/pull", method="POST",
+                                     data=_json.dumps({"model": body.ref, "stream": True}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=3600) as r:
+                for line in r:
+                    yield line
+        except Exception as e:
+            yield (_json.dumps({"error": f"{type(e).__name__}: {e}"}) + "\n").encode()
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+@app.post("/api/models/ollama/start")
+def ollama_start() -> dict:
+    import shutil
+    import subprocess
+
+    if not shutil.which("ollama"):
+        raise HTTPException(400, "ollama is not installed (https://ollama.com/download)")
+    subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------------------- designs
@@ -163,6 +219,8 @@ def delete_design(name: str) -> dict:
 
 class StartRequest(BaseModel):
     design: str
+    model: str | None = None
+    agent_models: dict[str, str] = {}
     mode: str = "auto"
     language: str = "sv"
     tb_source: str = "handwritten"
@@ -197,6 +255,12 @@ def start(req: StartRequest) -> dict:
         raise HTTPException(404, f"no design {req.design}")
     sid = f"{req.design}-{uuid.uuid4().hex[:6]}"
     settings = req.model_dump(exclude={"design", "mode", "language"})
+    try:
+        for ref in [req.model, *req.agent_models.values()]:
+            if ref:
+                llm_registry.split(ref)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     hub.run(sid, lambda sink: svc().start(req.design, req.mode, thread_id=sid, language=req.language,
                                           on_event=sink, **settings))
     return {"session_id": sid}
