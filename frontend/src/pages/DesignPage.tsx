@@ -4,13 +4,23 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { CodeView } from '../components/CodeView'
 import { Markdown } from '../components/Markdown'
 import { Chip, fade, Segmented, Switch, Tabs } from '../components/ui'
-import { api, type Config, type DesignDetail } from '../lib/api'
+import { ModelPicker } from '../components/ModelPicker'
+import { api, models as modelsApi, type Config, type DesignDetail, type Models } from '../lib/api'
 
 const MODE_HELP: Record<string, string> = {
   auto: 'The agents run every step, the simulator included, and stop on their own.',
   approval: 'Pauses after the plan, the testbench, the assertions, every block of stimulus and every result for your OK.',
   manual: 'The agents write each test; you run the generated run.sh yourself and tell them when it has finished.',
 }
+
+const AGENT_ROWS: [string, string][] = [
+  ['planner', 'Planner'],
+  ['testbench_architect', 'Testbench architect'],
+  ['assertion_writer', 'Assertion writer'],
+  ['stimulus_writer', 'Stimulus writer'],
+  ['coverage_analyst', 'Coverage analyst'],
+  ['triage', 'Triage explanations'],
+]
 
 const STOP_HELP: Record<string, string> = {
   target_pct: 'Stop once this share of functional coverage bins is hit.',
@@ -34,12 +44,17 @@ export function DesignPage() {
   const [stop, setStop] = useState<Record<string, number>>({})
   const [showStop, setShowStop] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [catalog, setCatalog] = useState<Models | null>(null)
+  const [model, setModel] = useState('')
+  const [agentModels, setAgentModels] = useState<Record<string, string>>({})
+  const [showAgents, setShowAgents] = useState(false)
 
   useEffect(() => {
     api.design(name).then((x) => {
       setD(x)
       if (!x.handwritten_tb) setSource('generated')
     }).catch((e) => setError(e.message))
+    modelsApi.list().then(setCatalog).catch(() => setCatalog(null))
     api.config().then((c) => {
       setConfig(c)
       setStop(Object.fromEntries(Object.entries(c.defaults).filter(([, v]) => typeof v === 'number')) as Record<string, number>)
@@ -51,7 +66,10 @@ export function DesignPage() {
     setBusy(true)
     setError('')
     try {
-      const { session_id } = await api.start({ design: name, mode, language: lang, tb_source: source, use_kb: useKb, ...stop })
+      const { session_id } = await api.start({
+        design: name, mode, language: lang, tb_source: source, use_kb: useKb, model: model || null,
+        agent_models: Object.fromEntries(Object.entries(agentModels).filter(([, v]) => v)), ...stop,
+      })
       nav(`/sessions/${session_id}`)
     } catch (e) {
       setError((e as Error).message)
@@ -61,7 +79,7 @@ export function DesignPage() {
 
   if (error && !d) return <div className="page"><div className="error">{error}</div></div>
   if (!d) return <div className="page"><div className="empty">Loading…</div></div>
-  const needsLlm = source === 'generated' && !config?.llm
+  const needsLlm = source === 'generated' && !config?.llm && !model && !agentModels.testbench_architect
 
   return (
     <div className="page">
@@ -157,6 +175,26 @@ export function DesignPage() {
             <span className="label">Mode</span>
             <Segmented value={mode} onChange={setMode} options={[{ value: 'auto', label: 'Auto' }, { value: 'approval', label: 'Approval' }, { value: 'manual', label: 'Manual' }]} />
             <span className="hint">{MODE_HELP[mode]}</span>
+          </div>
+          <div className="field">
+            <span className="label">Model</span>
+            <ModelPicker catalog={catalog} value={model} onChange={setModel} emptyLabel={`Server default (${config?.llm ?? 'none'})`} />
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowAgents(!showAgents)} style={{ paddingLeft: 0, alignSelf: 'flex-start' }}>
+              {showAgents ? '▾' : '▸'} Per-agent models
+            </button>
+            <AnimatePresence>
+              {showAgents && (
+                <motion.div className="stack" style={{ gap: 8, overflow: 'hidden' }} initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
+                  <span className="hint">A small model is often enough for stimulus and analysis; give the testbench architect your strongest one.</span>
+                  {AGENT_ROWS.map(([key, label]) => (
+                    <div key={key} className="field">
+                      <label>{label}</label>
+                      <ModelPicker catalog={catalog} value={agentModels[key] ?? ''} onChange={(v) => setAgentModels({ ...agentModels, [key]: v })} emptyLabel="Session model" />
+                    </div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
           <Switch
             on={useKb}

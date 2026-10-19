@@ -43,6 +43,10 @@ export function Shell(props: { children: ReactNode }) {
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="2" width="5" height="5" rx="1.2" /><rect x="9" y="2" width="5" height="5" rx="1.2" /><rect x="2" y="9" width="5" height="5" rx="1.2" /><rect x="9" y="9" width="5" height="5" rx="1.2" /></svg>
             Designs
           </NavLink>
+          <NavLink to="/models" className={({ isActive }) => `rail-link ${isActive ? 'active' : ''}`}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="2.2" /><path d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2M3.4 3.4l1.6 1.6M11 11l1.6 1.6M3.4 12.6 5 11M11 5l1.6-1.6" /></svg>
+            Models
+          </NavLink>
         </nav>
         <div>
           <div className="rail-label">Sessions</div>
@@ -60,7 +64,7 @@ export function Shell(props: { children: ReactNode }) {
           </div>
         </div>
         <div className="rail-foot">
-          <div className="row"><span className={`dot ${config?.llm ? 'ok' : 'wait'}`} />{config?.llm ?? 'no LLM: fallbacks only'}</div>
+          <div className="row"><span className={`dot ${config?.llm ? 'ok' : 'wait'}`} /><span className="mono" style={{ fontSize: 11 }}>{config?.llm ?? 'no LLM: fallbacks only'}</span></div>
           <div className="row"><span className={`dot ${config?.kb ? 'ok' : 'wait'}`} />{config?.kb ? `${config.kb.documents} docs in knowledge base` : 'knowledge base not built'}</div>
           <div className="row"><span className={`dot ${config?.uvm ? 'ok' : 'wait'}`} />{config?.uvm ? 'Verilator + UVM' : 'UVM library missing'}</div>
           <Segmented

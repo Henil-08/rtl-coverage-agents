@@ -172,3 +172,35 @@ export const api = {
   },
   kbSearch: (q: string) => call<KbHit[]>(`/api/kb/search?q=${encodeURIComponent(q)}`),
 }
+
+export type Provider = { provider: string; ready: boolean; models: string[]; suggested: string[]; detail: string }
+export type Models = { default: string | null; providers: Provider[] }
+
+export const models = {
+  list: () => call<Models>('/api/models'),
+  test: (ref: string) => call<{ ok: boolean; reply?: string; seconds?: number; error?: string }>('/api/models/test', json({ ref })),
+  startOllama: () => call('/api/models/ollama/start', { method: 'POST' }),
+  /** Stream an Ollama download; onProgress gets each JSON status line. */
+  async pull(name: string, onProgress: (p: { status?: string; completed?: number; total?: number; error?: string }) => void) {
+    const res = await fetch('/api/models/ollama/pull', json({ ref: name }))
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) if (line.trim()) onProgress(JSON.parse(line))
+    }
+  },
+}
+
+export const PROVIDER_LABEL: Record<string, string> = {
+  groq: 'Groq',
+  anthropic: 'Anthropic (Claude)',
+  openai: 'OpenAI',
+  ollama: 'Ollama (local)',
+  lmstudio: 'LM Studio (local)',
+}
