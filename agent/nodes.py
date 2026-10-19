@@ -46,6 +46,16 @@ def spec_digest(spec: str, limit: int = 4000) -> str:
     return ("\n".join(keep) or spec)[:limit]
 
 
+def unwrap_task(stim: str) -> str:
+    """Small models often wrap stimulus in their own task or begin/end; keep just the body."""
+    lines = stim.strip().splitlines()
+    if lines and re.match(r"\s*task\b", lines[0]) and re.match(r"\s*endtask\b", lines[-1]):
+        lines = lines[1:-1]
+    elif lines and lines[0].strip() == "begin" and lines[-1].strip().startswith("end"):
+        lines = lines[1:-1]
+    return "\n".join(lines)
+
+
 def compact_covergroup(text: str, limit: int = 3000) -> str:
     lines = [l.strip() for l in text.splitlines() if re.search(r"\b(coverpoint|cross|bins|covergroup)\b", l)]
     return "\n".join(lines)[:limit]
@@ -346,7 +356,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 feedback=feedback,
             ), "stimulus_writer", state)
             if text:
-                stim = _tag(text, "stimulus")
+                stim = unwrap_task(_tag(text, "stimulus"))
                 if valid_stimulus(stim, d.drivers):
                     block = {"iteration": it, "focus": _tag(text, "focus") or "LLM-directed test",
                              "stimulus": stim, "source": "llm"}
