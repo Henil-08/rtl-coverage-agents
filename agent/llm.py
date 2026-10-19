@@ -81,6 +81,12 @@ def make(ref: str, temperature: float = 0.2):
         from langchain_anthropic import ChatAnthropic
 
         return ChatAnthropic(model=model, temperature=temperature, max_tokens=8000, max_retries=1)
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+
+        # Ollama models often default to a 4k context, too small for the testbench architect's prompt.
+        return ChatOllama(model=model, base_url=local_url(provider), temperature=temperature,
+                          num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "16384")), num_predict=6000)
     from langchain_openai import ChatOpenAI
 
     if provider == "openai":
