@@ -175,8 +175,13 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 last_error["msg"] = f"{type(e).__name__}: {str(e)[:160]}"
                 if "RateLimit" not in type(e).__name__ and "429" not in str(e) or attempt == 3:
                     return None
-                m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", str(e))
-                wait = (int(m.group(1) or 0) * 60 + float(m.group(2))) if m else 20.0
+                m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s", str(e))
+                wait = (int(m.group(1) or 0) * 3600 + int(m.group(2) or 0) * 60 + float(m.group(3))) if m else 20.0
+                if wait > 120:
+                    period = "daily" if "per day" in str(e) else "rate"
+                    last_error["msg"] = (f"{ref} hit its {period} token limit; it frees up in {round(wait / 60)} min. "
+                                         "Pick another model on the Models page, or wait")
+                    return None
                 events.emit("llm_wait", agent=agent, seconds=round(wait, 1))
                 time.sleep(min(90.0, wait) + 1.0)
         return None
