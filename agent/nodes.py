@@ -8,7 +8,7 @@ from typing import Any
 
 from langgraph.types import interrupt
 
-from agent import prompts
+from agent import events, prompts
 from agent.sim import collect, prepare, run
 from agent.state import DEFAULTS, VerifState
 from designs import get_design
@@ -98,13 +98,25 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     runs_dir = runs_dir or Path("runs")
     last_error = {"msg": ""}
 
-    def ask(system: str, user: str) -> str | None:
+    def ask(system: str, user: str, agent: str = "") -> str | None:
         last_error["msg"] = ""
         if llm is None:
             return None
         for attempt in range(3):
             try:
-                resp = llm.invoke([("system", system), ("user", user)])
+                msgs = [("system", system), ("user", user)]
+                if events.active() and hasattr(llm, "stream"):
+                    buf, parts = events.TokenBuffer(agent), []
+                    events.emit("llm_start", agent=agent)
+                    for chunk in llm.stream(msgs):
+                        text = getattr(chunk, "content", "") or ""
+                        if text:
+                            parts.append(text)
+                            buf.add(text)
+                    buf.flush()
+                    events.emit("llm_end", agent=agent)
+                    return "".join(parts)
+                resp = llm.invoke(msgs)
                 return getattr(resp, "content", str(resp))
             except Exception as e:
                 last_error["msg"] = f"{type(e).__name__}: {str(e)[:160]}"
@@ -132,7 +144,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         user = prompts.PLANNER_USER.format(spec=d.spec(), covergroup=d.covergroup(), references=refs)
         if feedback:
             user += f"\nReviewer feedback on your last plan: {feedback}"
-        text = ask(prompts.PLANNER_SYSTEM, user)
+        text = ask(prompts.PLANNER_SYSTEM, user, "planner")
         plan = None
         if text:
             m = re.search(r"\[.*\]", text, re.S)
@@ -175,7 +187,8 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 fixed = None
                 if a.get("repairs", 0) < MAX_REPAIRS:
                     text = ask(prompts.ASSERTION_SYSTEM, prompts.ASSERTION_REPAIR_USER.format(
-                        spec=d.spec(), signals=d.signals, code=a["code"], problem=problem, label=a["label"]))
+                        spec=d.spec(), signals=d.signals, code=a["code"], problem=problem, label=a["label"]),
+                        "assertion_writer")
                     if text and "DROP" not in text:
                         fixed = next(iter(split_assertions(_tag(text, "assertion") or text)), None)
                 if fixed:
@@ -191,7 +204,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 spec=d.spec(), signals=d.signals, plan=json.dumps(state.get("plan", []), indent=1), count="4 to 8")
             if feedback:
                 user += f"\nReviewer feedback on your last set: {feedback}"
-            text = ask(prompts.ASSERTION_SYSTEM, user)
+            text = ask(prompts.ASSERTION_SYSTEM, user, "assertion_writer")
             new = split_assertions(_tag(text, "assertions") or text) if text else []
             kind = "llm" if new else "fallback"
             new = new or split_assertions(d.default_assertions)
@@ -236,7 +249,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 missed="\n".join(f"- {m}" for m in _missed(result)) or "- none yet",
                 guidance=state.get("next_focus") or "start broad: every operation and the corner cases in the spec",
                 feedback=feedback,
-            ))
+            ), "stimulus_writer")
             if text:
                 stim = _tag(text, "stimulus")
                 if valid_stimulus(stim, d.drivers):
@@ -345,7 +358,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         if checks:
             note = ask(prompts.TRIAGE_SYSTEM, prompts.TRIAGE_USER.format(
                 spec=d.spec(), checks=checks[:10], asserts=fired,
-                codes=[a["code"] for a in assertions if a["label"] in fired])) or ""
+                codes=[a["code"] for a in assertions if a["label"] in fired]), "triage") or ""
             return {"issue": "design_mismatch", "issue_detail": "", "triage_note": note,
                     "events": [_event(state, "triage", "llm" if note else "rule",
                                       f"reference model mismatch ({len(checks)}): possible design bug")]}
@@ -402,7 +415,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             text = ask(prompts.ANALYST_SYSTEM, prompts.ANALYST_USER.format(
                 plan=json.dumps(state.get("plan", []), indent=1), iteration=it, focus=record["focus"],
                 history=history, points=res.get("point_pct", {}), uncovered=uncovered or "none",
-                code=_code_summary(res), missed=_missed(res)))
+                code=_code_summary(res), missed=_missed(res)), "coverage_analyst")
             if text:
                 guidance, kind = text.strip(), "llm"
         return {
@@ -448,7 +461,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
 
         return node
 
-    return {
+    nodes = {
         "planner": planner,
         "review_plan": gate("plan"),
         "assertion_writer": assertion_writer,
@@ -460,3 +473,18 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         "coverage_analyst": coverage_analyst,
         "review_results": gate("results"),
     }
+    return {name: _published(name, fn) for name, fn in nodes.items()}
+
+
+def _published(name: str, fn):
+    """Publish when a node starts and everything it produced when it finishes."""
+    def node(state: VerifState) -> dict:
+        events.emit("node_start", node=name, iteration=state.get("iteration", 0))
+        out = fn(state)
+        update = {k: v for k, v in out.items() if k != "events"}
+        if isinstance(update.get("result"), dict):
+            update["result"] = {k: v for k, v in update["result"].items() if k != "log"}
+        events.emit("node_done", node=name, update=update, events=out.get("events", []))
+        return out
+
+    return node

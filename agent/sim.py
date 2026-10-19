@@ -7,6 +7,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from agent import events
+
 VERILATOR_FLAGS = "--binary --timing --coverage --assert --trace -Wno-fatal -Wno-lint -Wno-style -j 0"
 
 UVM_SRC = Path(__file__).resolve().parent.parent / "third_party" / "uvm" / "src"
@@ -73,14 +75,23 @@ def prepare(run_dir: Path, sources: dict[str, str], testbench: str, top: str = "
 
 
 def run(run_dir: Path, dut_hier: str = "tb.dut", timeout: int = 600) -> SimResult:
+    """Run run.sh, streaming each output line to the live event channel."""
     start = time.monotonic()
+    proc = subprocess.Popen(["bash", "run.sh"], cwd=run_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1)
+    lines: list[str] = []
     try:
-        proc = subprocess.run(
-            ["bash", "run.sh"], cwd=run_dir, capture_output=True, text=True, timeout=timeout
-        )
-        output = proc.stdout + proc.stderr
-    except subprocess.TimeoutExpired:
-        return SimResult(compile_errors=[f"simulation timed out after {timeout}s"], run_dir=str(run_dir))
+        for line in proc.stdout:
+            lines.append(line)
+            events.emit("sim_line", text=line.rstrip()[:400])
+            if time.monotonic() - start > timeout:
+                proc.kill()
+                return SimResult(compile_errors=[f"simulation timed out after {timeout}s"], run_dir=str(run_dir))
+        proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    output = "".join(lines)
     result = collect(run_dir, dut_hier)
     if not result.built and not result.compile_errors:
         result.compile_errors = _BUILD_ERR.findall(output) or [output.strip()[-2000:] or "build failed"]

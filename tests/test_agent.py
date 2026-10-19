@@ -156,3 +156,21 @@ def test_uvm_session_runs_end_to_end(make_svc):
     assert st["language"] == "uvm" and st["result"]["built"]
     assert "class seq_it1 extends base_seq" in st["testbench"]
     assert st["result"]["functional_pct"] > 90
+
+
+def test_live_events_stream_tokens_nodes_and_simulator_output(make_svc):
+    class StreamingLLM(FakeLLM):
+        def stream(self, msgs):
+            text = self.invoke(msgs).content
+            for i in range(0, len(text), 7):
+                yield type("C", (), {"content": text[i:i + 7]})()
+
+    seen = []
+    make_svc(StreamingLLM()).start("adder4", "auto", thread_id="live", max_iters=1, on_event=seen.append)
+    kinds = {e["type"] for e in seen}
+    assert {"node_start", "node_done", "token", "llm_start", "llm_end", "sim_line", "finished"} <= kinds
+    planner_text = "".join(e["text"] for e in seen if e["type"] == "token" and e["agent"] == "planner")
+    assert '"sum is right"' in planner_text
+    done = [e for e in seen if e["type"] == "node_done" and e["node"] == "simulator"]
+    assert done and "log" not in done[0]["update"]["result"]
+    assert any("TEST PASSED" in e["text"] for e in seen if e["type"] == "sim_line")

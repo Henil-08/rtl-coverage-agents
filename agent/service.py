@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from langgraph.types import Command
 
+from agent import events
 from agent.graph import DB_PATH, RUNS_DIR, build_graph, sqlite_checkpointer
 from agent.mutation import run_mutants
 from agent.sim import simulate
@@ -45,14 +46,21 @@ class VerificationService:
         return {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
 
     def _drive(self, payload, thread_id: str, on_event: Callable[[dict], None] | None) -> dict:
-        for update in self.graph.stream(payload, self._config(thread_id), stream_mode="updates"):
-            if on_event is None:
-                continue
-            for node, values in update.items():
-                if isinstance(values, dict):
-                    for ev in values.get("events", []):
-                        on_event({"node": node, **ev})
-        return self.status(thread_id)
+        """Run the graph until it finishes or pauses. on_event receives every live event: node starts
+        and results, streamed LLM tokens, simulator output, and a final pause or finish."""
+        token = events.install(on_event)
+        try:
+            for _ in self.graph.stream(payload, self._config(thread_id), stream_mode="updates"):
+                pass
+        finally:
+            events.remove(token)
+        status = self.status(thread_id)
+        if on_event is not None:
+            if status["pending"]:
+                on_event({"type": "waiting", "pending": status["pending"]})
+            else:
+                on_event({"type": "finished", "done": status["done"], "stop_reason": status["stop_reason"]})
+        return status
 
     def start(self, design: str, mode: str = "auto", thread_id: str | None = None,
               on_event: Callable[[dict], None] | None = None, language: str = "sv", **settings: Any) -> dict:
