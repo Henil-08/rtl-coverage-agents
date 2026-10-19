@@ -20,6 +20,7 @@ def lint(sources: dict[str, str], top: str | None = None) -> list[str]:
     """Verilator lint. Returns error lines (warnings are ignored)."""
     with tempfile.TemporaryDirectory() as tmp:
         for name, text in sources.items():
+            (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)
             (Path(tmp) / name).write_text(text)
         cmd = ["verilator", "--lint-only", "-Wno-fatal", "-Wno-lint", "-Wno-style", *sources]
         if top:
@@ -44,6 +45,7 @@ def ports(sources: dict[str, str], top: str | None = None) -> dict:
     """Top module name, its ports (name, direction, width) and the likely clock and reset."""
     with tempfile.TemporaryDirectory() as tmp:
         for name, text in sources.items():
+            (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)
             (Path(tmp) / name).write_text(text)
         cmd = ["verilator", "--json-only", "-Wno-fatal", "-Wno-lint", "-Wno-style", "--Mdir", "json", *sources]
         if top:

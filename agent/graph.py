@@ -19,7 +19,17 @@ def _rejected(state: VerifState) -> bool:
 
 
 def _after_plan(state: VerifState) -> str:
-    return "planner" if _rejected(state) else "assertion_writer"
+    if _rejected(state):
+        return "planner"
+    if state.get("tb_source") == "generated" and not (state.get("gen_tb") or {}).get("ok"):
+        return "testbench_architect"
+    return "assertion_writer"
+
+
+def _after_tb_design(state: VerifState) -> str:
+    if state.get("done"):
+        return END
+    return "testbench_architect" if _rejected(state) else "assertion_writer"
 
 
 def _after_assertions(state: VerifState) -> str:
@@ -55,7 +65,9 @@ def build_graph(llm=None, checkpointer=None, runs_dir: Path = RUNS_DIR):
         g.add_node(name, fn)
     g.add_edge(START, "planner")
     g.add_edge("planner", "review_plan")
-    g.add_conditional_edges("review_plan", _after_plan, ["planner", "assertion_writer"])
+    g.add_conditional_edges("review_plan", _after_plan, ["planner", "testbench_architect", "assertion_writer"])
+    g.add_edge("testbench_architect", "review_tb_design")
+    g.add_conditional_edges("review_tb_design", _after_tb_design, ["testbench_architect", "assertion_writer", END])
     g.add_edge("assertion_writer", "review_assertions")
     g.add_conditional_edges("review_assertions", _after_assertions,
                             ["assertion_writer", "simulator", "stimulus_writer"])

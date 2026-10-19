@@ -17,7 +17,8 @@ from agent.graph import DB_PATH, RUNS_DIR, build_graph, sqlite_checkpointer
 from agent.mutation import run_mutants
 from agent.sim import simulate
 from agent.state import DEFAULTS, MODES
-from designs import DESIGNS, get_design
+from agent.tbgen import design_for
+from designs import all_designs, get_design
 
 RECURSION_LIMIT = 400
 
@@ -66,8 +67,13 @@ class VerificationService:
               on_event: Callable[[dict], None] | None = None, language: str = "sv", **settings: Any) -> dict:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
-        if language not in get_design(design).languages():
-            raise ValueError(f"{design} has no {language} testbench; choose from {get_design(design).languages()}")
+        d = get_design(design)
+        if not d.has_handwritten_tb():
+            settings["tb_source"] = "generated"
+        if settings.get("tb_source") not in (None, "handwritten", "generated"):
+            raise ValueError("tb_source must be handwritten or generated")
+        if language not in d.languages() and settings.get("tb_source") != "generated":
+            raise ValueError(f"{design} has no {language} testbench; choose from {d.languages()}")
         thread_id = thread_id or f"{design}-{uuid.uuid4().hex[:6]}"
         if self.exists(thread_id):
             return self.status(thread_id)
@@ -96,6 +102,8 @@ class VerificationService:
             "exists": bool(v),
             "design": v.get("design"),
             "language": v.get("language", "sv"),
+            "tb_source": v.get("tb_source", "handwritten"),
+            "gen_tb": v.get("gen_tb") or {},
             "mode": v.get("mode"),
             "iteration": v.get("iteration", 0),
             "done": bool(v.get("done")),
@@ -122,13 +130,14 @@ class VerificationService:
             rows = self._conn.execute(
                 "SELECT thread_id, MAX(rowid) FROM checkpoints GROUP BY thread_id ORDER BY MAX(rowid) DESC"
             ).fetchall()
-        return [r[0] for r in rows if (self.graph.get_state(self._config(r[0])).values or {}).get("design") in DESIGNS]
+        known = set(all_designs())
+        return [r[0] for r in rows if (self.graph.get_state(self._config(r[0])).values or {}).get("design") in known]
 
     def suite(self, thread_id: str) -> str | None:
         v = self.graph.get_state(self._config(thread_id)).values or {}
         if not v.get("blocks"):
             return None
-        return get_design(v["design"]).build_testbench(v["blocks"], v.get("assertions", []), v.get("language", "sv"))
+        return design_for(v).build_testbench(v["blocks"], v.get("assertions", []), v.get("language", "sv"))
 
     def run_mutation(self, thread_id: str, workers: int = 4) -> dict:
         v = self.graph.get_state(self._config(thread_id)).values or {}
@@ -136,7 +145,7 @@ class VerificationService:
         if tb is None:
             raise ValueError(f"session {thread_id} has no test suite yet")
         uvm = v.get("language") == "uvm"
-        report = run_mutants(get_design(v["design"]), tb, self.runs_dir / thread_id / "mutants",
+        report = run_mutants(design_for(v), tb, self.runs_dir / thread_id / "mutants",
                              min(workers, 3) if uvm else workers, uvm)
         report["suite_hash"] = _hash(tb)
         with self._lock:
@@ -188,5 +197,6 @@ class VerificationService:
 
     @staticmethod
     def designs() -> list[dict]:
-        return [{"name": d.name, "title": d.title, "mutants": len(d.mutants), "languages": d.languages()}
-                for d in DESIGNS.values()]
+        return [{"name": d.name, "title": d.title, "kind": d.kind, "mutants": len(d.mutants),
+                 "languages": d.languages(), "handwritten_tb": d.has_handwritten_tb()}
+                for d in all_designs().values()]

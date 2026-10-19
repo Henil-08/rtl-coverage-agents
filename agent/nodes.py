@@ -10,6 +10,7 @@ from langgraph.types import interrupt
 
 from agent import events, prompts
 from agent.sim import collect, prepare, run
+from agent.tbgen import architect, design_for
 from agent.state import DEFAULTS, VerifState
 from designs import get_design
 from designs.base import dedupe_labels, split_assertions, strip_fences, valid_stimulus
@@ -133,7 +134,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 "t": round(time.time(), 2)}
 
     def planner(state: VerifState) -> dict:
-        d = get_design(state["design"])
+        d = design_for(state)
         feedback = state.get("feedback", "")
         hits = retrieve(d) if _cfg(state, "use_kb") else []
         refs = ""
@@ -141,7 +142,9 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             refs = "\nREFERENCE MATERIAL (excerpts from public datasheets and user guides)\n" + "\n".join(
                 f"[{h['ref']}] {h['title']}{' p.' + str(h['page']) if h['page'] else ''}: {h['text'][:700]}"
                 for h in hits) + "\n"
-        user = prompts.PLANNER_USER.format(spec=d.spec(), covergroup=d.covergroup(), references=refs)
+        covergroup = ("(the testbench architect writes the coverage model after this plan)"
+                      if _cfg(state, "tb_source") == "generated" else d.covergroup())
+        user = prompts.PLANNER_USER.format(spec=d.spec(), covergroup=covergroup, references=refs)
         if feedback:
             user += f"\nReviewer feedback on your last plan: {feedback}"
         text = ask(prompts.PLANNER_SYSTEM, user, "planner")
@@ -168,8 +171,37 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
             "events": [_event(state, "planner", kind, summary)],
         }
 
-    def assertion_writer(state: VerifState) -> dict:
+    def testbench_architect(state: VerifState) -> dict:
         d = get_design(state["design"])
+        lang = state.get("language", "sv")
+        if llm is None:
+            if d.has_handwritten_tb():
+                return {"tb_source": "handwritten", "events": [_event(state, "testbench_architect", "fallback",
+                        "no LLM available, using the hand-written testbench")]}
+            return {"done": True, "issue": "tb_failed", "stop_reason": "writing a testbench for an uploaded "
+                    "design needs an LLM (set GROQ_API_KEY)",
+                    "events": [_event(state, "testbench_architect", "rule", "no LLM, cannot write a testbench")]}
+        gen = architect(d, state.get("plan", []), lang, ask, Path(state.get("run_root", str(runs_dir))) /
+                        f"testbench_{len(state.get('events', []))}", state.get("feedback", ""))
+        passed = sum(g["ok"] for g in gen["gates"])
+        if not gen["ok"]:
+            if gen.get("design_bug"):
+                return {"gen_tb": gen, "done": True, "issue": "design_mismatch", "triage_note": gen["design_bug"],
+                        "stop_reason": "the testbench architect believes the RTL breaks the spec, see triage",
+                        "events": [_event(state, "testbench_architect", "llm", f"RTL bug suspected: {gen['design_bug']}")]}
+            return {"gen_tb": gen, "done": True, "issue": "tb_failed", "stop_reason": gen["reason"],
+                    "events": [_event(state, "testbench_architect", "llm", gen["reason"])]}
+        out = {"gen_tb": gen, "feedback": "", "events": [_event(state, "testbench_architect", "llm",
+               f"testbench written and validated: {passed}/{len(gen['gates'])} gates passed, drivers "
+               f"{', '.join(t['name'] for t in gen['drivers'])}" + (", UVM included" if gen.get("uvm") else ""))]}
+        if lang == "uvm" and not gen.get("uvm"):
+            out["language"] = "sv"
+            out["events"].append(_event(state, "testbench_architect", "rule",
+                                        "UVM testbench failed its gates, continuing in SystemVerilog"))
+        return out
+
+    def assertion_writer(state: VerifState) -> dict:
+        d = design_for(state)
         assertions = [dict(a) for a in state.get("assertions", [])]
         issue = state.get("issue", "")
         events = []
@@ -217,7 +249,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         return out
 
     def stimulus_writer(state: VerifState) -> dict:
-        d = get_design(state["design"])
+        d = design_for(state)
         retry = state.get("issue") == "stimulus_compile"
         review = state.get("review") or {}
         redo = retry or (review.get("step") == "testbench" and review.get("action") == "reject")
@@ -275,7 +307,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
         }
 
     def simulator(state: VerifState) -> dict:
-        d = get_design(state["design"])
+        d = design_for(state)
         if state.get("issue") == "missing_output" and state.get("run_dir"):
             run_dir = Path(state["run_dir"])
         else:
@@ -322,7 +354,7 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 "events": [_event(state, "simulator", kind, summary)]}
 
     def triage(state: VerifState) -> dict:
-        d = get_design(state["design"])
+        d = design_for(state)
         res = state.get("result") or {}
         assertions = state.get("assertions", [])
         labels = {a["label"] for a in assertions if a["status"] == "active"}
@@ -437,6 +469,10 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
                 payload["plan"] = state.get("plan", [])
             elif step == "assertions":
                 payload["assertions"] = state.get("assertions", [])
+            elif step == "tb_design":
+                gen = state.get("gen_tb") or {}
+                payload.update(sv=gen.get("sv", ""), uvm=gen.get("uvm", ""), gates=gen.get("gates", []),
+                               harness_doc=gen.get("harness_doc", ""), ok=gen.get("ok", False))
             elif step == "testbench":
                 block = next((b for b in state.get("blocks", []) if b["iteration"] == state.get("iteration")), {})
                 payload.update(testbench=state.get("testbench", ""), focus=block.get("focus", ""),
@@ -464,6 +500,8 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     nodes = {
         "planner": planner,
         "review_plan": gate("plan"),
+        "testbench_architect": testbench_architect,
+        "review_tb_design": gate("tb_design"),
         "assertion_writer": assertion_writer,
         "review_assertions": gate("assertions"),
         "stimulus_writer": stimulus_writer,

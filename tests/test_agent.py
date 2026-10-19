@@ -174,3 +174,65 @@ def test_live_events_stream_tokens_nodes_and_simulator_output(make_svc):
     done = [e for e in seen if e["type"] == "node_done" and e["node"] == "simulator"]
     assert done and "log" not in done[0]["update"]["result"]
     assert any("TEST PASSED" in e["text"] for e in seen if e["type"] == "sim_line")
+
+
+class ArchitectLLM(FakeLLM):
+    """Plays the testbench architect by handing back a known-good testbench, after one broken attempt."""
+
+    def __init__(self, design="adder4", lang="sv"):
+        super().__init__()
+        self.tb = get_design(design).template(lang)
+        self.sv = get_design(design).template("sv")
+        self.arch_calls = 0
+
+    def invoke(self, msgs):
+        user = msgs[-1][1]
+        if "Write the testbench TEMPLATE" in user:
+            self.arch_calls += 1
+            body = self.sv if "PREVIOUS TESTBENCH FAILED" in user else self.sv.replace("// @STIMULUS_CALLS", "")
+            out = (f"<testbench>\n{body}\n</testbench>\n<how_to_drive>apply(a, b, cin): one vector per cycle"
+                   f"</how_to_drive>\n<wave_signals>a, b, cin, sum, exp_sum, cout, exp_cout</wave_signals>")
+            return type("R", (), {"content": out})()
+        if "equivalent UVM testbench" in user:
+            return type("R", (), {"content": f"<testbench>\n{self.tb}\n</testbench>"})()
+        return super().invoke(msgs)
+
+
+def test_generated_testbench_passes_gates_and_drives_the_loop(make_svc):
+    llm = ArchitectLLM()
+    svc = make_svc(llm)
+    seen = []
+    st = svc.start("adder4", "auto", thread_id="gen", tb_source="generated", max_iters=2, on_event=seen.append)
+    gen = st["gen_tb"]
+    assert gen["ok"] and llm.arch_calls == 2
+    gates = [(g["gate"], g["ok"]) for g in gen["gates"]]
+    assert gates[0] == ("structure", False)
+    assert ("compile", True) in gates and ("golden_run", True) in gates and ("mutant_smoke", True) in gates
+    assert [t["name"] for t in gen["drivers"]] == ["apply"]
+    assert any(e["type"] == "tb_gate" for e in seen)
+    assert st["result"]["built"] and st["result"]["functional_pct"] > 50
+    assert "stim_it1" in svc.suite("gen")
+
+
+def test_uploaded_design_requires_generation_and_llm(make_svc, tmp_path, monkeypatch):
+    from designs import user
+
+    monkeypatch.setattr(user, "USER_DIR", tmp_path / "ud")
+    user.create("adder_copy", get_design("adder4").sources(), get_design("adder4").spec())
+    st = make_svc().start("adder_copy", "auto", thread_id="nollm")
+    assert st["done"] and st["issue"] == "tb_failed" and "needs an LLM" in st["stop_reason"]
+    st = make_svc(ArchitectLLM()).start("adder_copy", "auto", thread_id="up", max_iters=1)
+    assert st["tb_source"] == "generated" and st["gen_tb"]["ok"] and st["result"]["built"]
+
+
+def test_generated_uvm_testbench(make_svc):
+    from pathlib import Path
+
+    if not (Path(__file__).resolve().parent.parent / "third_party/uvm/src/uvm_pkg.sv").exists():
+        pytest.skip("UVM submodule missing")
+    st = make_svc(ArchitectLLM("adder4", "uvm")).start("adder4", "auto", thread_id="genuvm", language="uvm",
+                                                        tb_source="generated", max_iters=1)
+    gates = {g["gate"]: g["ok"] for g in st["gen_tb"]["gates"]}
+    assert gates["uvm_compile"] and gates["uvm_golden_run"] and gates["uvm_matches_sv"]
+    assert st["language"] == "uvm" and "class seq_it1 extends base_seq" in st["testbench"]
+    assert st["result"]["built"]

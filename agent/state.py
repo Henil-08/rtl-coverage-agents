@@ -17,6 +17,8 @@ class VerifState(TypedDict, total=False):
     max_iters: int
 
     use_kb: bool
+    tb_source: str
+    gen_tb: dict
     kb_hits: list[dict]
     plan: list[dict]
     assertions: list[dict]
@@ -56,4 +58,5 @@ DEFAULTS: dict[str, Any] = {
     "plateau_delta": 1.0,
     "max_iters": 8,
     "use_kb": True,
+    "tb_source": "handwritten",
 }
