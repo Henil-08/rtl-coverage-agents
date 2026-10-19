@@ -53,8 +53,46 @@ def _ports_text(info: dict) -> str:
                      for p in info["ports"])
 
 
+def extract_testbench(text: str) -> str:
+    """The <testbench> section, or failing that the largest code block that looks like a testbench."""
+    tb = _tag(text, "testbench")
+    if tb:
+        return tb
+    blocks = re.findall(r"```(?:\w+)?\n(.*?)```", text or "", re.S)
+    blocks = [b for b in blocks if "module" in b and "endmodule" in b]
+    if blocks:
+        return max(blocks, key=len).strip()
+    m = re.search(r"(`timescale.*endmodule)", text or "", re.S)
+    return m.group(1).strip() if m else ""
+
+
+def _initial_block(tb: str) -> str:
+    m = re.search(r"\binitial\s+begin\b(.*?)\$finish", tb, re.S)
+    return m.group(1) if m else ""
+
+
 def structure_problems(tb: str, lang: str, top: str, tasks: list[dict] | None = None) -> list[str]:
     probs = [f"missing the marker line `{m}`" for m in MARKERS[lang] if m not in tb]
+    if lang == "sv" and not probs:
+        init = _initial_block(tb)
+        if "// @STIMULUS_CALLS" not in init:
+            probs.append("`// @STIMULUS_CALLS` must be inside the initial block, after $dumpvars and before the "
+                         "summary prints and $finish")
+        for marker in ("// @ASSERTIONS", "// @STIMULUS_TASKS"):
+            if marker in init:
+                probs.append(f"`{marker}` must be at module scope, not inside the initial block")
+        names = [t["name"] for t in tasks or []]
+        calls = sum(len(re.findall(rf"\b{n}\s*\(", init)) for n in names)
+        if calls > 2:
+            probs.append(f"the initial block calls the driver tasks {calls} times; remove all example stimulus, "
+                         "the stimulus writer fills `// @STIMULUS_CALLS` (a reset sequence of at most two calls is fine)")
+        cg = re.search(r"covergroup\b(.*?)endgroup", tb, re.S)
+        points = len(re.findall(r"\bcoverpoint\b", cg.group(1))) if cg else 0
+        bins = len(re.findall(r"\bbins\b", cg.group(1))) if cg else 0
+        if not cg or points < 3 or bins < 8 or re.search(r"later agents|to be added|placeholder|TODO", cg.group(1), re.I):
+            probs.append(f"the covergroup is a placeholder ({points} coverpoints, {bins} bins). Write the complete "
+                         "coverage model now: a coverpoint with named bins for every feature in the plan, plus "
+                         "crosses for behaviour that combines inputs. Nobody fills it in later.")
     if not re.search(r"\bmodule\s+tb\b", tb):
         probs.append("the top module must be called tb")
     if not re.search(rf"\b{re.escape(top)}\b(\s*#\s*\(.*?\))?\s+dut\b", tb, re.S):
@@ -97,10 +135,10 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
         text = ask(prompts.TB_SYSTEM, prompt, "testbench_architect")
         if not text:
             return {"ok": False, "reason": "the LLM did not answer", "gates": gates}
-        tb, how, waves, rtl_bug = (_tag(text, "testbench"), _tag(text, "how_to_drive"), _tag(text, "wave_signals"),
+        tb, how, waves, rtl_bug = (extract_testbench(text), _tag(text, "how_to_drive"), _tag(text, "wave_signals"),
                                    _tag(text, "rtl_bug"))
         tasks = driver_tasks(tb)
-        probs = structure_problems(tb, "sv", top) + ([] if tasks else ["no driver task with plain logic arguments"])
+        probs = structure_problems(tb, "sv", top, tasks) + ([] if tasks else ["no driver task with plain logic arguments"])
         if probs:
             gate("structure", False, "; ".join(probs))
             failed = ("structure", "\n".join(probs), tb)
@@ -127,7 +165,13 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
             gate("golden_run", False, detail)
             failed = ("golden run: the reference model disagrees with the RTL on random stimulus", detail, tb)
             continue
-        gate("golden_run", True, f"{r.stimulus_count or SMOKE_CALLS} random transactions, no mismatches")
+        if (r.stimulus_count or 0) < SMOKE_CALLS:
+            detail = (f"the testbench reported {r.stimulus_count} cycles but {SMOKE_CALLS} driver calls were inserted "
+                      "at // @STIMULUS_CALLS, so inserted stimulus does not run (or `cycles` is not counted per call)")
+            gate("golden_run", False, detail)
+            failed = ("stimulus does not run", detail, tb)
+            continue
+        gate("golden_run", True, f"{r.stimulus_count} random transactions, no mismatches")
 
         last = attempt == MAX_SV_TRIES - 1
         dead = [cp for cp, pct in r.point_pct.items() if pct == 0]
@@ -180,7 +224,7 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
                                         f"Previous version:\n{failed[2]}\nFix it.")
         text = ask(prompts.TB_SYSTEM, prompts.UVM_USER.format(spec=design.spec(), top=top, ports=_ports_text(info),
                                                               sv_testbench=sv, feedback=fb), "testbench_architect")
-        ub = _tag(text, "testbench") or strip_fences(text or "")
+        ub = extract_testbench(text)
         probs = structure_problems(ub, "uvm", top, tasks)
         if probs:
             gate("uvm_structure", False, "; ".join(probs))

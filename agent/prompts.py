@@ -179,7 +179,12 @@ RULES
 - Covergroup: plain bins, ranges, wildcard bins and crosses only. No default, ignore_bins or illegal_bins.
   Every bin must be reachable by legal stimulus.
 - No randomize(), fork, classes, $random in the template, or # delays other than the clock and the #1 in drivers.
-- Keep the four marker comments exactly as written, each on its own line.
+- Keep the marker comments exactly where the skeleton puts them, each on its own line:
+  // @ASSERTIONS and // @STIMULUS_TASKS at module scope, // @STIMULUS_CALLS inside the initial block.
+- The initial block contains NO example stimulus: only waveform setup, an optional reset, the marker and the
+  summary. Every driver call must increment `cycles`, because the run is checked against the number of calls.
+- Write the COMPLETE covergroup now (no other agent adds bins later): one coverpoint with named bins per plan
+  feature, edge values (zero, maximum), every operation type, and crosses for behaviour that combines inputs.
 
 OUTPUT exactly these sections:
 <testbench>

@@ -86,7 +86,7 @@ class Design:
 
     def build_testbench(self, blocks: list[dict], assertions: list[dict], lang: str = "sv") -> str:
         active = [a["code"] for a in assertions if a.get("status", "active") == "active"]
-        out = self.template(lang)
+        out = _normalise_markers(self.template(lang))
         out = out.replace("  // @ASSERTIONS", indent("\n".join(active), 2) if active else "  // no assertions")
         if lang == "uvm":
             seqs, calls = [], []
@@ -114,6 +114,15 @@ class Design:
             calls.append(f"    stim_it{it}();")
         out = out.replace("  // @STIMULUS_TASKS", "\n\n".join(tasks) or "  // no stimulus yet")
         return out.replace("    // @STIMULUS_CALLS", "\n".join(calls) or "    // no stimulus yet")
+
+
+_MARKER_INDENT = {"ASSERTIONS": 2, "STIMULUS_TASKS": 2, "SEQUENCES": 2, "STIMULUS_CALLS": 4, "SEQUENCE_CALLS": 6}
+
+
+def _normalise_markers(text: str) -> str:
+    """Put every marker on its own line at the indent build_testbench expects, whatever the author used."""
+    return re.sub(r"^[ \t]*// @(ASSERTIONS|STIMULUS_TASKS|STIMULUS_CALLS|SEQUENCES|SEQUENCE_CALLS)\b[^\n]*$",
+                  lambda m: " " * _MARKER_INDENT[m.group(1)] + "// @" + m.group(1), text, flags=re.M)
 
 
 def indent(text: str, spaces: int) -> str:
