@@ -262,3 +262,21 @@ def test_per_agent_model_overrides(make_svc, monkeypatch):
     assert st["model"] == "ollama:small" and st["agent_models"] == {"planner": "anthropic:big"}
     with pytest.raises(ValueError):
         make_svc().start("adder4", "auto", model="nonsense")
+
+
+def test_mcp_brain_answers_every_agent_step(make_svc):
+    brain = FakeLLM()
+    svc = make_svc()
+    st = svc.start("adder4", "auto", thread_id="brain", model="mcp:claude", max_iters=1)
+    agents = []
+    for _ in range(30):
+        task = st["pending"]
+        if not task:
+            break
+        assert task["step"] == "llm_task"
+        agents.append(task["agent"])
+        reply = brain.invoke([("system", task["system"]), ("user", task["prompt"])]).content
+        st = svc.respond("brain", "answer", reply)
+    assert st["done"] and st["result"]["built"]
+    assert agents[:3] == ["planner", "assertion_writer", "stimulus_writer"]
+    assert st["plan"][0]["feature"] == "sum is right"

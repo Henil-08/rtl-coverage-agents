@@ -22,13 +22,14 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 LOCAL_URLS = {"ollama": "http://localhost:11434", "lmstudio": "http://localhost:1234"}
 KEYS = {"groq": "GROQ_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
-PROVIDERS = ("groq", "anthropic", "openai", "ollama", "lmstudio")
+PROVIDERS = ("groq", "anthropic", "openai", "ollama", "lmstudio", "mcp")
 SUGGESTED = {
     "groq": ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"],
     "anthropic": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     "openai": [],
     "ollama": ["qwen2.5-coder:7b", "qwen2.5-coder:14b", "gpt-oss:20b", "llama3.1:8b"],
     "lmstudio": [],
+    "mcp": ["claude"],
 }
 # Groq's free tier allows 8,000 tokens per minute, and a single request (prompt plus answer) has to fit.
 GROQ_FREE_TPM = 8000
@@ -69,6 +70,8 @@ def make(ref: str, temperature: float = 0.2):
     provider, model = split(ref)
     if provider in KEYS and not os.getenv(KEYS[provider]):
         raise ValueError(f"{KEYS[provider]} is not set in .env")
+    if provider == "mcp":
+        return McpBrain()
     if provider == "groq":
         from langchain_groq import ChatGroq
 
@@ -84,6 +87,15 @@ def make(ref: str, temperature: float = 0.2):
         return ChatOpenAI(model=model, max_retries=1)
     return ChatOpenAI(model=model, base_url=local_url(provider) + "/v1", api_key="local", temperature=temperature,
                       timeout=900, max_retries=0)
+
+
+class McpBrain:
+    """Stands in for a model whose answers come from a connected MCP client (Claude Code): the agent
+    pauses with its prompt and the client replies through the answer_task tool."""
+
+
+def is_mcp(ref: str | None) -> bool:
+    return bool(ref) and ref.startswith("mcp:")
 
 
 def get_llm(model: str | None = None):
@@ -123,6 +135,10 @@ def catalog() -> list[dict]:
     out = []
     for p in PROVIDERS:
         entry = {"provider": p, "ready": False, "models": [], "suggested": SUGGESTED[p], "detail": ""}
+        if p == "mcp":
+            out.append({**entry, "ready": True, "models": ["claude"], "detail": "Claude Code answers each agent "
+                        "step through the MCP tools next_task and answer_task, so no API key is needed"})
+            continue
         try:
             if p in KEYS:
                 key = os.getenv(KEYS[p])

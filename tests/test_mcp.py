@@ -36,3 +36,18 @@ def test_upload_tool(tmp_path, monkeypatch):
     rtl = "module inv(input logic clk, input logic a, output logic y);\nalways_ff @(posedge clk) y <= ~a;\nendmodule\n"
     out = server.upload_design("inv", {"inv.sv": rtl}, "- R1: y is not a, one cycle later")
     assert out["name"] == "inv" and {p["name"] for p in out["ports"]} == {"clk", "a", "y"}
+
+
+def test_claude_as_brain_through_tools():
+    from tests.test_agent import FakeLLM
+
+    brain = FakeLLM()
+    st = server.start_session("adder4", "auto", model="mcp:claude", max_iters=1)
+    sid = st["session_id"]
+    for _ in range(30):
+        task = server.next_task(sid)
+        if not task["waiting"]:
+            break
+        assert task["kind"] == "llm_task"
+        server.answer_task(sid, brain.invoke([("system", task["system"]), ("user", task["request"])]).content)
+    assert server.get_session(sid)["done"]

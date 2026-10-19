@@ -17,6 +17,8 @@ mcp = MCPServer(
     "rtl-coverage-agent",
     instructions=(
         "Coverage-guided verification of small SystemVerilog designs on Verilator. "
+        "To be the LLM for every agent yourself, call start_session with model='mcp:claude', then loop: "
+        "next_task, answer as that agent in the requested format, answer_task, until the session is done. "
         "Either let the built-in agents run a session (start_session, then respond while it is paused), "
         "or act as the test writer yourself: read describe_design, then call simulate with your own stimulus "
         "and assertions and read back functional, toggle, branch and expression coverage. "
@@ -97,6 +99,8 @@ def start_session(
     mode: str = "auto",
     language: str = "sv",
     tb_source: str = "handwritten",
+    model: str | None = None,
+    agent_models: dict[str, str] | None = None,
     target_pct: float | None = None,
     toggle_target: float | None = None,
     max_iters: int | None = None,
@@ -104,9 +108,37 @@ def start_session(
     """Start the agent loop. mode: auto (runs to the end), approval (pauses at every review gate),
     manual (pauses so a person runs the generated run.sh). language: sv (plain SystemVerilog testbench)
     or uvm (UVM testbench, slower to build). tb_source: handwritten, or generated to have the testbench
-    architect write it from the spec (uploaded designs always use generated). Returns where it stopped or paused."""
-    return _view(svc().start(design, mode, language=language, tb_source=tb_source, target_pct=target_pct,
-                             toggle_target=toggle_target, max_iters=max_iters))
+    architect write it from the spec (uploaded designs always use generated). model / agent_models pick
+    provider:model references; use model="mcp:claude" to answer every agent step yourself through
+    next_task and answer_task. Returns where it stopped or paused."""
+    return _view(svc().start(design, mode, language=language, tb_source=tb_source, model=model,
+                             agent_models=agent_models, target_pct=target_pct, toggle_target=toggle_target,
+                             max_iters=max_iters))
+
+
+@mcp.tool()
+def next_task(session_id: str) -> dict:
+    """For sessions using the mcp:claude model: the agent step waiting for your answer. Returns the agent's
+    role, its system prompt and its request. Answer exactly as that agent, following the output format the
+    request asks for, then call answer_task."""
+    st = svc().status(session_id)
+    p = st["pending"]
+    if not p:
+        return {"waiting": False, "done": st["done"], "stop_reason": st["stop_reason"]}
+    if p.get("step") != "llm_task":
+        return {"waiting": True, "kind": "review", "step": p.get("step"),
+                "hint": "this is a review gate; answer it with respond(action=approve|reject|stop)"}
+    return {"waiting": True, "kind": "llm_task", "agent": p["agent"], "iteration": p["iteration"],
+            "system": p["system"], "request": p["prompt"]}
+
+
+@mcp.tool()
+def answer_task(session_id: str, text: str) -> dict:
+    """Give your answer to the pending agent step. The session runs on until the next step that needs you
+    (or until it finishes); the result says what happened and what is waiting now."""
+    out = _view(svc().respond(session_id, "answer", text))
+    out["next"] = next_task(session_id)
+    return out
 
 
 @mcp.tool()

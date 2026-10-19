@@ -9,7 +9,7 @@ from typing import Any
 from langgraph.types import interrupt
 
 from agent import events, prompts
-from agent.llm import get_llm, model_name, request_budget
+from agent.llm import get_llm, is_mcp, model_name, request_budget
 from agent.sim import collect, prepare, run
 from agent.tbgen import architect, design_for
 from agent.state import DEFAULTS, VerifState
@@ -134,6 +134,14 @@ def make_nodes(llm=None, runs_dir: Path | None = None) -> dict[str, Any]:
     def ask(system: str, user: str, agent: str = "", state: dict | None = None) -> str | None:
         last_error["msg"] = ""
         model, ref = llm_for(agent, state)
+        if is_mcp(ref):
+            events.emit("llm_task", agent=agent)
+            answer = interrupt({"step": "llm_task", "agent": agent, "iteration": (state or {}).get("iteration", 0),
+                                "system": system, "prompt": user})
+            text = answer.get("feedback", "") if isinstance(answer, dict) else str(answer)
+            if text:
+                events.emit("token", agent=agent, text=text)
+            return text or None
         if model is None:
             if ref:
                 last_error["msg"] = f"model {ref} is not configured"
