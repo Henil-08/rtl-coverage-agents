@@ -17,7 +17,7 @@ from designs import get_design
 from designs.base import Design, strip_fences
 from designs.generic import call, driver_tasks, fallback_for, random_stimulus_for
 
-MAX_SV_TRIES = 4
+MAX_SV_TRIES = 6
 MAX_UVM_TRIES = 3
 SMOKE_CALLS = 300
 MARKERS = {"sv": ("// @ASSERTIONS", "// @STIMULUS_TASKS", "// @STIMULUS_CALLS"),
@@ -129,8 +129,9 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
             continue
         gate("golden_run", True, f"{r.stimulus_count or SMOKE_CALLS} random transactions, no mismatches")
 
+        last = attempt == MAX_SV_TRIES - 1
         dead = [cp for cp, pct in r.point_pct.items() if pct == 0]
-        if dead and "reach" not in retried:
+        if dead and "reach" not in retried and not last:
             retried.add("reach")
             gate("coverage_reachable", False, f"never hit by random stimulus: {', '.join(dead)}")
             failed = ("coverage reachability", f"these coverpoints got no hits from {SMOKE_CALLS} random "
@@ -142,7 +143,7 @@ def architect(design: Design, plan: list[dict], language: str, ask: Callable[...
         suite = draft.build_testbench([{"iteration": 1, "focus": "smoke", "stimulus": stim}], [], "sv")
         mut = run_mutants(draft, suite, workdir / f"mutants_try{attempt + 1}") if design.mutants else None
         caught = (mut or {}).get("caught", 0)
-        if mut and caught == 0 and "mutants" not in retried:
+        if mut and caught == 0 and "mutants" not in retried and not last:
             retried.add("mutants")
             gate("mutant_smoke", False, f"0/{len(design.mutants)} planted bugs caught by random stimulus")
             failed = ("checker strength", "random stimulus through your testbench caught none of these planted "

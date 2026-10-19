@@ -170,7 +170,10 @@ endmodule
 
 RULES
 - Driver task arguments are plain `input logic [N-1:0] name` or `input logic name`. No enums, structs or classes.
-  Give drivers clear names (write_a, read_b, push, apply, ...). 1 to 8 drivers. A driver may cover several ports at once.
+  Give drivers clear names (write_a, read_b, push, apply, ...). 1 to 8 drivers.
+- Anything the spec lets happen in the same cycle must be reachable through ONE driver call. For example a
+  multi-port memory needs a driver that operates both ports in the same cycle (collisions, simultaneous
+  read and write); separate per-port drivers alone can never produce those cases.
 - Only check an output when the spec defines its value; track validity (e.g. a written flag per memory word)
   and skip checks on undefined values.
 - Covergroup: plain bins, ranges, wildcard bins and crosses only. No default, ignore_bins or illegal_bins.
